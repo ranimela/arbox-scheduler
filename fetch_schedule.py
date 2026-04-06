@@ -55,6 +55,30 @@ def send_email(subject, body):
         print(f"Failed to send email: {e}")
         return False
 
+def get_workout_details(session, workout_id):
+    """
+    Fetches the workout details (plan) for a given workout_id.
+    """
+    if not workout_id:
+        return "Not available"
+    
+    url = f'https://apiappv2.arboxapp.com/api/v2/workout/details/{workout_id}'
+    try:
+        resp = session.get(url)
+        if resp.status_code == 200:
+            data = resp.json().get("data", {})
+            # The workout plan is often in 'description' or 'workout_data'
+            # We'll try to extract a meaningful summary.
+            plan = data.get("description", "Not available")
+            if not plan or plan == "null":
+                plan = "Not available"
+            return plan
+        else:
+            return "Not available"
+    except Exception as e:
+        print(f"Error fetching workout details: {e}")
+        return "Not available"
+
 def book_class(session, schedule_id):
     """
     Attempts to book a class using the V2 Arbox API.
@@ -143,6 +167,12 @@ def generate_html_table(classes_info, date_range_str):
         tr.target {{
             background-color: var(--target-row);
         }}
+        .workout-text {{
+            font-size: 0.85rem;
+            color: #94a3b8;
+            margin-top: 0.5rem;
+            font-style: italic;
+        }}
         .badge {{
             padding: 0.25rem 0.75rem;
             border-radius: 9999px;
@@ -165,6 +195,7 @@ def generate_html_table(classes_info, date_range_str):
                     <th>Hour</th>
                     <th>Training</th>
                     <th>Coach</th>
+                    <th>Workout Plan</th>
                     <th>Status</th>
                 </tr>
             </thead>
@@ -182,6 +213,7 @@ def generate_html_table(classes_info, date_range_str):
                     <td>{cls['hour']}</td>
                     <td>{cls['training']}</td>
                     <td>{cls['coach']}</td>
+                    <td class="workout-text">{cls.get('workout_plan', 'Not available')}</td>
                     <td>{status_badge if is_target else ''}</td>
                 </tr>"""
 
@@ -264,6 +296,11 @@ def main():
             if not coach:
                 coach = "Unknown"
             
+            workout_id = entry.get('workout_id')
+            workout_plan = "Not available"
+            if workout_id:
+                workout_plan = get_workout_details(session, workout_id)
+
             schedule_id = entry.get('id')
             
             class_data = {
@@ -272,6 +309,7 @@ def main():
                 'hour': hour,
                 'training': training,
                 'coach': coach,
+                'workout_plan': workout_plan,
                 'id': schedule_id,
                 'was_booked': False
             }
@@ -285,7 +323,7 @@ def main():
                 class_data['was_booked'] = success
                 
                 status_icon = "✅" if success else "❌"
-                booking_summaries.append(f"{status_icon} {day_name} {dt_str} {hour}: {log_msg}")
+                booking_summaries.append(f"{status_icon} {day_name} {dt_str} {hour}: {log_msg}\nWorkout: {workout_plan}")
 
             classes_info.append(class_data)
         except Exception as e:
