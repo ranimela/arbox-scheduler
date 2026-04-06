@@ -1,6 +1,8 @@
 name: Arbox Scheduler Agent
 
 on:
+  push:
+    branches: [main]
   schedule:
     # Runs at 18:00 UTC (21:00 Israel Time) every day
     # This matches when registration opens for classes 7 days ahead
