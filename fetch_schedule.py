@@ -25,9 +25,9 @@ SMTP_PORT = 587
 
 IDENTIFIER = "f1UhUDad1588686203"
 
-# TARGET SLOTS
-TARGET_DAYS = ['Sunday', 'Tuesday', 'Thursday', 'Friday']
-TARGET_HOUR = '08:00'
+# TARGET SLOTS (Edit these or use GitHub Variables to change your schedule)
+TARGET_DAYS = os.getenv('TARGET_DAYS', 'Sunday,Tuesday,Thursday,Friday').split(',')
+TARGET_HOUR = os.getenv('TARGET_HOUR', '08:00')
 
 # SET TO False TO ACTUALLY BOOK CLASSES
 DRY_RUN = False

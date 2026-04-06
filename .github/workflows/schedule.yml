@@ -38,5 +38,7 @@ jobs:
           ARBOX_MEMBERSHIP_USER_ID: ${{ secrets.ARBOX_MEMBERSHIP_USER_ID }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          TARGET_DAYS: ${{ vars.TARGET_DAYS }}
+          TARGET_HOUR: ${{ vars.TARGET_HOUR }}
         run: |
           python fetch_schedule.py
