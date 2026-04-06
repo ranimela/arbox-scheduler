@@ -1,6 +1,9 @@
 import os
 import json
 import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -14,6 +17,12 @@ PASSWORD = os.getenv('ARBOX_PASSWORD')
 USER_ID = os.getenv('ARBOX_USER_ID')
 MEMBERSHIP_USER_ID = os.getenv('ARBOX_MEMBERSHIP_USER_ID', '12165397')
 
+# SMTP Settings
+SMTP_USER = os.getenv('SMTP_USER', EMAIL)
+SMTP_PASS = os.getenv('SMTP_PASS') # 16-char App Password
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
+
 IDENTIFIER = "f1UhUDad1588686203"
 
 # TARGET SLOTS
@@ -22,6 +31,29 @@ TARGET_HOUR = '08:00'
 
 # SET TO False TO ACTUALLY BOOK CLASSES
 DRY_RUN = False
+
+def send_email(subject, body):
+    if not SMTP_PASS:
+        print("Skipping email: SMTP_PASS not set.")
+        return False
+    
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = SMTP_USER
+        msg['To'] = EMAIL
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+        
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASS)
+        server.send_message(msg)
+        server.quit()
+        print(f"Email notification sent to {EMAIL}.")
+        return True
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+        return False
 
 def book_class(session, schedule_id):
     """
@@ -36,19 +68,22 @@ def book_class(session, schedule_id):
     
     if DRY_RUN:
         print(f"[DRY RUN] Would book class with Schedule ID: {schedule_id}")
-        return True
+        return True, "Dry run success"
 
     try:
         resp = session.post(url, json=payload)
         if resp.status_code == 200:
-            print(f"Successfully booked class {schedule_id}!")
-            return True
+            msg = f"Successfully booked class {schedule_id}!"
+            print(msg)
+            return True, msg
         else:
-            print(f"Failed to book class {schedule_id}: {resp.status_code} {resp.text}")
-            return False
+            msg = f"Failed to book class {schedule_id}: {resp.status_code} {resp.text}"
+            print(msg)
+            return False, msg
     except Exception as e:
-        print(f"Error during booking: {e}")
-        return False
+        msg = f"Error during booking: {e}"
+        print(msg)
+        return False, msg
 
 def generate_html_table(classes_info, date_range_str):
     html_content = f"""<!DOCTYPE html>
@@ -208,6 +243,7 @@ def main():
     events = resp.json().get("data", [])
     
     classes_info = []
+    booking_summaries = []
     
     for entry in events:
         try:
@@ -243,19 +279,32 @@ def main():
 
             # 3. Target Matching & Booking
             if day_name in TARGET_DAYS and hour == TARGET_HOUR:
-                print(f"FOUND TARGET CLASS: {day_name} at {hour} (ID: {schedule_id})")
-                success = book_class(session, schedule_id)
+                msg_start = f"TARGET MATCH FOUND: {day_name} at {hour}"
+                print(msg_start)
+                
+                success, log_msg = book_class(session, schedule_id)
                 class_data['was_booked'] = success
+                
+                status_icon = "✅" if success else "❌"
+                booking_summaries.append(f"{status_icon} {day_name} {dt_str} {hour}: {log_msg}")
 
             classes_info.append(class_data)
         except Exception as e:
             print(f"Skipping a class entry due to processing error: {e}")
             continue
 
-    # Output results
+    # 4. Final Processing & Email Report
     classes_info.sort(key=lambda x: (x['date'], x['hour']))
     generate_html_table(classes_info, f"{tomorrow} to {next_week}")
-    print(f"Found {len(classes_info)} classes. Agent report generated.")
+    
+    if booking_summaries:
+        subject = f"Arbox Agent Status: {len(booking_summaries)} actions today"
+        body = "Arbox Gym Booking Report\n\n" + "\n".join(booking_summaries)
+        send_email(subject, body)
+    else:
+        print("No target classes found today to book.")
+        # Optional: Send email anyway if requested
+        # send_email("Arbox Agent Status: No targets found", "Checked the schedule, no 8:00 AM target slots found.")
 
 if __name__ == '__main__':
     main()

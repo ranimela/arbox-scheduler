@@ -36,5 +36,7 @@ jobs:
           ARBOX_PASSWORD: ${{ secrets.ARBOX_PASSWORD }}
           ARBOX_USER_ID: ${{ secrets.ARBOX_USER_ID }}
           ARBOX_MEMBERSHIP_USER_ID: ${{ secrets.ARBOX_MEMBERSHIP_USER_ID }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
         run: |
           python fetch_schedule.py
