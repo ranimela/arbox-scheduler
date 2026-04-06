@@ -210,34 +210,47 @@ def main():
     classes_info = []
     
     for entry in events:
-        dt_obj = datetime.strptime(entry.get('date'), "%Y-%m-%d")
-        day_name = dt_obj.strftime("%A")
-        # Extract coach name safely
-        coach_dict = entry.get('coach') or {}
-        coach = coach_dict.get('full_name') or f"{coach_dict.get('first_name', '')} {coach_dict.get('last_name', '')}".strip()
-        if not coach:
-            coach = "Unknown"
-        
-        class_data = {
-            'day': day_name,
-            'date': entry.get('date'),
-            'hour': hour,
-            'training': training,
-            'coach': coach,
-            'id': schedule_id,
-            'was_booked': False
-        }
-
-        # 3. Target Matching & Booking
-        if day_name in TARGET_DAYS and hour == TARGET_HOUR:
-            print(f"FOUND TARGET CLASS: {day_name} at {hour} (ID: {schedule_id})")
+        try:
+            dt_str = entry.get('date')
+            if not dt_str:
+                continue
+            dt_obj = datetime.strptime(dt_str, "%Y-%m-%d")
+            day_name = dt_obj.strftime("%A")
+            hour = entry.get('time', '')
             
-            # Check if already booked (user_signed_up or similar if available, otherwise just try)
-            # In V2, we just try to book; if already booked, Arbox returns an error we skip.
-            success = book_class(session, schedule_id)
-            class_data['was_booked'] = success
+            # Safe extraction of training name
+            box_cats = entry.get('box_categories') or {}
+            series_dict = entry.get('series') or {}
+            training = box_cats.get('name') or series_dict.get('series_name') or 'WOD'
+            
+            # Safe extraction of coach name
+            coach_dict = entry.get('coach') or {}
+            coach = coach_dict.get('full_name') or f"{coach_dict.get('first_name', '')} {coach_dict.get('last_name', '')}".strip()
+            if not coach:
+                coach = "Unknown"
+            
+            schedule_id = entry.get('id')
+            
+            class_data = {
+                'day': day_name,
+                'date': dt_str,
+                'hour': hour,
+                'training': training,
+                'coach': coach,
+                'id': schedule_id,
+                'was_booked': False
+            }
 
-        classes_info.append(class_data)
+            # 3. Target Matching & Booking
+            if day_name in TARGET_DAYS and hour == TARGET_HOUR:
+                print(f"FOUND TARGET CLASS: {day_name} at {hour} (ID: {schedule_id})")
+                success = book_class(session, schedule_id)
+                class_data['was_booked'] = success
+
+            classes_info.append(class_data)
+        except Exception as e:
+            print(f"Skipping a class entry due to processing error: {e}")
+            continue
 
     # Output results
     classes_info.sort(key=lambda x: (x['date'], x['hour']))
