@@ -230,14 +230,13 @@ def main():
         print(f"Login error: {e}")
         return
 
-    # 2. Fetch schedule for next 8 days
+    # 2. Fetch schedule for tomorrow ONLY
     today = datetime.now()
     tomorrow = (today + timedelta(days=1)).strftime("%Y-%m-%d")
-    next_week = (today + timedelta(days=8)).strftime("%Y-%m-%d")
     
-    print(f"Checking schedule from {tomorrow} to {next_week}...")
+    print(f"Checking schedule for tomorrow ({tomorrow})...")
     schedule_url = 'https://apiappv2.arboxapp.com/api/v2/site/schedule/betweenDates'
-    payload = {"from": tomorrow, "to": next_week, "locations_box_id": int(LOCATION_ID)}
+    payload = {"from": tomorrow, "to": tomorrow, "locations_box_id": int(LOCATION_ID)}
     
     resp = session.post(schedule_url, json=payload)
     events = resp.json().get("data", [])
@@ -295,16 +294,18 @@ def main():
 
     # 4. Final Processing & Email Report
     classes_info.sort(key=lambda x: (x['date'], x['hour']))
-    generate_html_table(classes_info, f"{tomorrow} to {next_week}")
+    generate_html_table(classes_info, tomorrow)
     
     if booking_summaries:
-        subject = f"Arbox Agent Status: {len(booking_summaries)} actions today"
+        subject = f"Arbox Agent Status: Successful Target Match"
         body = "Arbox Gym Booking Report\n\n" + "\n".join(booking_summaries)
         send_email(subject, body)
     else:
-        print("No target classes found today to book.")
-        # Optional: Send email anyway if requested
-        # send_email("Arbox Agent Status: No targets found", "Checked the schedule, no 8:00 AM target slots found.")
+        print(f"No target classes found for {tomorrow} to book.")
+        # Update user even if no target classes found
+        subject = f"Arbox Agent Status: No sessions found for {tomorrow}"
+        body = f"Checked the schedule for tomorrow ({tomorrow}).\nNo 8:00 AM slots found for the target days: {', '.join(TARGET_DAYS)}."
+        send_email(subject, body)
 
 if __name__ == '__main__':
     main()
