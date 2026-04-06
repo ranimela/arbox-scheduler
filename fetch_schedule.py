@@ -33,6 +33,29 @@ TARGET_HOUR = os.getenv('TARGET_HOUR', '08:00')
 # SET TO False TO ACTUALLY BOOK CLASSES
 DRY_RUN = False
 
+def send_email(subject, body):
+    if not SMTP_PASS:
+        print("Skipping email: SMTP_PASS not set.")
+        return False
+    
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = SMTP_USER
+        msg['To'] = EMAIL
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+        
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASS)
+        server.send_message(msg)
+        server.quit()
+        print(f"Email notification sent to {EMAIL}.")
+        return True
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+        return False
+
 def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0):
     """
     If the script starts early (e.g. at 17:55 UTC), it will wait
