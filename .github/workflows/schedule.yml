@@ -4,9 +4,9 @@ on:
   push:
     branches: [main]
   schedule:
-    # Runs at 18:00 UTC (21:00 Israel Time) every day
-    # This matches when registration opens for classes 7 days ahead
-    - cron: '0 18 * * *'
+    # Runs at 17:55 UTC (20:55 Israel Time) every day
+    # This arrives early to hit the 21:00:00 registration window
+    - cron: '55 17 * * *'
   
   workflow_dispatch:
 

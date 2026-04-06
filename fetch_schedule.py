@@ -4,7 +4,8 @@ import requests
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timedelta
+import time
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -32,28 +33,36 @@ TARGET_HOUR = os.getenv('TARGET_HOUR', '08:00')
 # SET TO False TO ACTUALLY BOOK CLASSES
 DRY_RUN = False
 
-def send_email(subject, body):
-    if not SMTP_PASS:
-        print("Skipping email: SMTP_PASS not set.")
-        return False
+def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0):
+    """
+    If the script starts early (e.g. at 17:55 UTC), it will wait
+    until exactly 18:00:00 UTC to ensure sub-second precision.
+    """
+    now_utc = datetime.now(timezone.utc)
+    target_time = now_utc.replace(hour=target_hour_utc, minute=target_minute_utc, second=0, microsecond=0)
     
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = SMTP_USER
-        msg['To'] = EMAIL
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'plain'))
+    # Only wait if we are within 10 minutes of the target (to avoid waiting 23 hours if run manually)
+    if (target_time - now_utc).total_seconds() > 600 or (target_time - now_utc).total_seconds() < 0:
+        print(f"Skipping wait: Not in the precision window. Current UTC: {now_utc.strftime('%H:%M:%S')}")
+        return
+
+    print(f"--- PRECISION COUNTDOWN ENGAGED ---")
+    print(f"Target Time: {target_time.strftime('%H:%M:%S')} UTC (21:00:00 Israel)")
+    
+    while True:
+        now = datetime.now(timezone.utc)
+        remaining = (target_time - now).total_seconds()
         
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.send_message(msg)
-        server.quit()
-        print(f"Email notification sent to {EMAIL}.")
-        return True
-    except Exception as e:
-        print(f"Failed to send email: {e}")
-        return False
+        if remaining <= 0:
+            print(f"BEEP BEEP BEEP! 21:00:00 REACHED! GO GO GO! (Actual: {now.strftime('%H:%M:%S.%f')})")
+            break
+            
+        if remaining > 1:
+            print(f"T-minus {int(remaining)} seconds...", end='\r')
+            time.sleep(0.5)
+        else:
+            # High-frequency polling for the last second
+            time.sleep(0.01)
 
 def book_class(session, schedule_id):
     """
@@ -211,6 +220,9 @@ def main():
         'lang': 'en',
         'User-Agent': 'Mozilla/5.0'
     }
+
+    # 1. Start Precision Timer (Wait for registration window opening)
+    wait_for_precision_window()
 
     session = requests.Session()
     session.headers.update(base_headers)
