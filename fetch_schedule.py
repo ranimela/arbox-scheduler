@@ -212,10 +212,11 @@ def main():
     for entry in events:
         dt_obj = datetime.strptime(entry.get('date'), "%Y-%m-%d")
         day_name = dt_obj.strftime("%A")
-        hour = entry.get('time', '')
-        training = entry.get('box_categories', {}).get('name', 'WOD')
-        coach = entry.get('coach', {}).get('full_name', 'Unknown')
-        schedule_id = entry.get('id')
+        # Extract coach name safely
+        coach_dict = entry.get('coach') or {}
+        coach = coach_dict.get('full_name') or f"{coach_dict.get('first_name', '')} {coach_dict.get('last_name', '')}".strip()
+        if not coach:
+            coach = "Unknown"
         
         class_data = {
             'day': day_name,
