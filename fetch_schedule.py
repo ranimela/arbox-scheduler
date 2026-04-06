@@ -12,16 +12,51 @@ LOCATION_ID = os.getenv('ARBOX_LOCATION_ID', '70')
 EMAIL = os.getenv('ARBOX_EMAIL')
 PASSWORD = os.getenv('ARBOX_PASSWORD')
 USER_ID = os.getenv('ARBOX_USER_ID')
+MEMBERSHIP_USER_ID = os.getenv('ARBOX_MEMBERSHIP_USER_ID', '12165397')
 
 IDENTIFIER = "f1UhUDad1588686203"
 
-def generate_html_table(classes_info, tomorrow):
+# TARGET SLOTS
+TARGET_DAYS = ['Sunday', 'Tuesday', 'Thursday', 'Friday']
+TARGET_HOUR = '08:00'
+
+# SET TO False TO ACTUALLY BOOK CLASSES
+DRY_RUN = False
+
+def book_class(session, schedule_id):
+    """
+    Attempts to book a class using the V2 Arbox API.
+    """
+    url = f'https://apiappv2.arboxapp.com/api/v2/scheduleUser/insert?XDEBUG_SESSION_START=PHPSTORM'
+    payload = {
+        "extras": None,
+        "membership_user_id": int(MEMBERSHIP_USER_ID),
+        "schedule_id": int(schedule_id)
+    }
+    
+    if DRY_RUN:
+        print(f"[DRY RUN] Would book class with Schedule ID: {schedule_id}")
+        return True
+
+    try:
+        resp = session.post(url, json=payload)
+        if resp.status_code == 200:
+            print(f"Successfully booked class {schedule_id}!")
+            return True
+        else:
+            print(f"Failed to book class {schedule_id}: {resp.status_code} {resp.text}")
+            return False
+    except Exception as e:
+        print(f"Error during booking: {e}")
+        return False
+
+def generate_html_table(classes_info, date_range_str):
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Schedule for {tomorrow}</title>
+    <title>Schedule for {date_range_str}</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
         :root {{
@@ -32,6 +67,7 @@ def generate_html_table(classes_info, tomorrow):
             --accent-hover: #60a5fa;
             --table-border: #334155;
             --row-hover: rgba(59, 130, 246, 0.1);
+            --target-row: rgba(34, 197, 94, 0.15);
         }}
         body {{
             font-family: 'Inter', sans-serif;
@@ -51,14 +87,11 @@ def generate_html_table(classes_info, tomorrow):
             border-radius: 16px;
             padding: 2rem;
             width: 100%;
-            max-width: 800px;
+            max-width: 900px;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-            animation: fadeIn 0.5s ease-out;
         }}
         h1 {{
             margin-top: 0;
-            font-weight: 600;
-            font-size: 1.5rem;
             text-align: center;
             color: var(--accent-hover);
         }}
@@ -72,57 +105,49 @@ def generate_html_table(classes_info, tomorrow):
             text-align: left;
             border-bottom: 1px solid var(--table-border);
         }}
-        th {{
-            font-weight: 500;
-            color: #94a3b8;
-            text-transform: uppercase;
-            font-size: 0.875rem;
-            letter-spacing: 0.05em;
+        tr.target {{
+            background-color: var(--target-row);
         }}
-        tr {{
-            transition: all 0.2s ease;
-        }}
-        tr:hover {{
-            background-color: var(--row-hover);
-            transform: translateX(4px);
-        }}
-        td {{
-            font-size: 1rem;
-        }}
-        .training-badge {{
-            background: rgba(59, 130, 246, 0.2);
-            color: #93c5fd;
+        .badge {{
             padding: 0.25rem 0.75rem;
             border-radius: 9999px;
-            font-size: 0.875rem;
+            font-size: 0.85rem;
             font-weight: 500;
         }}
-        @keyframes fadeIn {{
-            from {{ opacity: 0; transform: translateY(10px); }}
-            to {{ opacity: 1; transform: translateY(0); }}
-        }}
+        .booked {{ background: #16a34a; color: white; }}
+        .open {{ background: #3b82f6; color: white; }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Gorillot Schedule - {tomorrow}</h1>
+        <h1>Gorillot Agent - Schedule Report</h1>
+        <p style="text-align:center">Looking for: {", ".join(TARGET_DAYS)} at {TARGET_HOUR}</p>
         <table>
             <thead>
                 <tr>
-                    <th>Coach</th>
-                    <th>Training</th>
+                    <th>Day</th>
+                    <th>Date</th>
                     <th>Hour</th>
+                    <th>Training</th>
+                    <th>Coach</th>
+                    <th>Status</th>
                 </tr>
             </thead>
             <tbody>
 """
-            
     for cls in classes_info:
+        is_target = cls['day'] in TARGET_DAYS and cls['hour'] == TARGET_HOUR
+        row_class = "target" if is_target else ""
+        status_badge = '<span class="badge booked">Booked!</span>' if cls.get('was_booked') else '<span class="badge open">Available</span>'
+        
         html_content += f"""
-                <tr>
-                    <td>{cls['coach']}</td>
-                    <td><span class="training-badge">{cls['training']}</span></td>
+                <tr class="{row_class}">
+                    <td>{cls['day']}</td>
+                    <td>{cls['date']}</td>
                     <td>{cls['hour']}</td>
+                    <td>{cls['training']}</td>
+                    <td>{cls['coach']}</td>
+                    <td>{status_badge if is_target else ''}</td>
                 </tr>"""
 
     html_content += """
@@ -134,7 +159,6 @@ def generate_html_table(classes_info, tomorrow):
 """
     with open('schedule.html', 'w', encoding='utf-8') as f:
         f.write(html_content)
-    print("Beautiful HTML schedule generated at 'schedule.html'")
 
 def main():
     if not EMAIL or not PASSWORD:
@@ -156,85 +180,68 @@ def main():
     session = requests.Session()
     session.headers.update(base_headers)
     
+    # 1. Login
     login_url = 'https://apiappv2.arboxapp.com/api/v2/user/siteLogin'
-    creds = {"email": EMAIL, "password": PASSWORD, "phone": ""}
-    
     try:
-        resp = session.post(login_url, json=creds)
-    except Exception as e:
-        print(f"Error connecting: {e}")
-        return
-
-    if resp.status_code != 200:
-        print(f"Login failed: {resp.status_code} {resp.text}")
-        return
-
-    resp_json = resp.json()
-    data = resp_json.get("data", resp_json)
-    token = data.get("token") or resp.headers.get("token")
-
-    if token:
+        resp = session.post(login_url, json={"email": EMAIL, "password": PASSWORD, "phone": ""})
+        data = resp.json().get("data", resp.json())
+        token = data.get("token") or resp.headers.get("token")
+        if not token:
+            print("Login failed, no token returned.")
+            return
         session.headers.update({'accesstoken': token})
-
-    tomorrow_dt = datetime.now() + timedelta(days=1)
-    tomorrow = tomorrow_dt.strftime("%Y-%m-%d")
-    
-    schedule_url = 'https://apiappv2.arboxapp.com/api/v2/site/schedule/betweenDates'
-    schedule_payload = {
-        "from": tomorrow,
-        "to": tomorrow,
-        "locations_box_id": int(LOCATION_ID) if LOCATION_ID.isdigit() else LOCATION_ID,
-    }
-    
-    resp = session.post(schedule_url, json=schedule_payload)
-    if resp.status_code != 200:
-        print(f"Failed to fetch schedule: {resp.status_code}")
+        print(f"Logged in as {EMAIL}.")
+    except Exception as e:
+        print(f"Login error: {e}")
         return
 
-    schedule_data = resp.json()
-    events = schedule_data.get("data", schedule_data)
+    # 2. Fetch schedule for next 8 days
+    today = datetime.now()
+    tomorrow = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+    next_week = (today + timedelta(days=8)).strftime("%Y-%m-%d")
+    
+    print(f"Checking schedule from {tomorrow} to {next_week}...")
+    schedule_url = 'https://apiappv2.arboxapp.com/api/v2/site/schedule/betweenDates'
+    payload = {"from": tomorrow, "to": next_week, "locations_box_id": int(LOCATION_ID)}
+    
+    resp = session.post(schedule_url, json=payload)
+    events = resp.json().get("data", [])
     
     classes_info = []
-
-    def extract_info(class_entry):
-        # Extract coach name
-        coach_dict = class_entry.get('coach', {})
-        coach_name = coach_dict.get('full_name') or f"{coach_dict.get('first_name', '')} {coach_dict.get('last_name', '')}".strip()
-        if not coach_name:
-            coach_name = "Unknown"
-            
-        # Extract training name
-        box_cats = class_entry.get('box_categories', {})
-        series = class_entry.get('series', {})
+    
+    for entry in events:
+        dt_obj = datetime.strptime(entry.get('date'), "%Y-%m-%d")
+        day_name = dt_obj.strftime("%A")
+        hour = entry.get('time', '')
+        training = entry.get('box_categories', {}).get('name', 'WOD')
+        coach = entry.get('coach', {}).get('full_name', 'Unknown')
+        schedule_id = entry.get('id')
         
-        training = box_cats.get('name') or series.get('series_name') or "Training"
-        
-        # Extract hour
-        hour = class_entry.get('time', '')
-        
-        return {
-            'coach': coach_name,
+        class_data = {
+            'day': day_name,
+            'date': entry.get('date'),
+            'hour': hour,
             'training': training,
-            'hour': hour
+            'coach': coach,
+            'id': schedule_id,
+            'was_booked': False
         }
 
-    if isinstance(events, list):
-        for class_entry in events:
-            classes_info.append(extract_info(class_entry))
-    elif isinstance(events, dict):
-        for location_name, days in events.items():
-            if str(LOCATION_ID) in str(location_name) or True: 
-                if not days or not isinstance(days, list):
-                    continue
-                classes_list = days[0] if isinstance(days[0], list) else days
-                for class_entry in classes_list:
-                    if isinstance(class_entry, dict):
-                        classes_info.append(extract_info(class_entry))
+        # 3. Target Matching & Booking
+        if day_name in TARGET_DAYS and hour == TARGET_HOUR:
+            print(f"FOUND TARGET CLASS: {day_name} at {hour} (ID: {schedule_id})")
+            
+            # Check if already booked (user_signed_up or similar if available, otherwise just try)
+            # In V2, we just try to book; if already booked, Arbox returns an error we skip.
+            success = book_class(session, schedule_id)
+            class_data['was_booked'] = success
 
-    # Sort classes by hour
-    classes_info.sort(key=lambda x: x['hour'])
-    
-    generate_html_table(classes_info, tomorrow)
+        classes_info.append(class_data)
+
+    # Output results
+    classes_info.sort(key=lambda x: (x['date'], x['hour']))
+    generate_html_table(classes_info, f"{tomorrow} to {next_week}")
+    print(f"Found {len(classes_info)} classes. Agent report generated.")
 
 if __name__ == '__main__':
     main()

@@ -2,12 +2,10 @@ name: Arbox Scheduler Agent
 
 on:
   schedule:
-    # Runs at 07:00 UTC (10:00 AM Israel Time) every Tuesday and Thursday
-    # Change these numbers to match when your gym opens class registration!
-    # Format: minute hour day_of_month month day_of_week
-    - cron: '0 7 * * 2,4'
+    # Runs at 18:00 UTC (21:00 Israel Time) every day
+    # This matches when registration opens for classes 7 days ahead
+    - cron: '0 18 * * *'
   
-  # This allows you to trigger the run manually from the GitHub website
   workflow_dispatch:
 
 jobs:
@@ -30,11 +28,11 @@ jobs:
 
       - name: Run Arbox Scheduler Agent
         env:
-          # These environment variables will be securely pulled from your GitHub Secrets
           ARBOX_BOX_ID: ${{ secrets.ARBOX_BOX_ID }}
           ARBOX_LOCATION_ID: ${{ secrets.ARBOX_LOCATION_ID }}
           ARBOX_EMAIL: ${{ secrets.ARBOX_EMAIL }}
           ARBOX_PASSWORD: ${{ secrets.ARBOX_PASSWORD }}
           ARBOX_USER_ID: ${{ secrets.ARBOX_USER_ID }}
+          ARBOX_MEMBERSHIP_USER_ID: ${{ secrets.ARBOX_MEMBERSHIP_USER_ID }}
         run: |
           python fetch_schedule.py
