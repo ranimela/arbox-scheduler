@@ -1,0 +1,9 @@
+.env
+schedule_output.json
+schedule.html
+gorillot_app.js
+gorillot_vendor.js
+.agents/
+.gemini/
+*.pyc
+__pycache__/
