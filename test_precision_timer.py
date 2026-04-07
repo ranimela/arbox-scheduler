@@ -69,13 +69,13 @@ def wait_for_precision_window(target_hour_utc, target_minute_utc):
             time.sleep(0.01)
 
 if __name__ == "__main__":
-    # Test target set for 08:45:00 UTC (11:45:00 AM Israel Time)
+    # Test target set for 08:51:00 UTC (11:51:00 AM Israel Time)
     target_h = 8
-    target_m = 45
+    target_m = 51
     
     print(f"Script started. Waiting for {target_h:02}:{target_m:02}:00 UTC...")
     wait_for_precision_window(target_h, target_m)
     
-    subject = "Arbox Agent: Precision Timing Test"
-    body = f"This email was fired at exactly {datetime.now(timezone.utc).strftime('%H:%M:%S')} UTC.\nIf you received this within seconds of 11:45:00 AM, the precision timer is working!"
+    subject = "Arbox Agent: Precision Timing Test (11:51 AM)"
+    body = f"This email was fired at exactly {datetime.now(timezone.utc).strftime('%H:%M:%S')} UTC.\nIf you received this within seconds of 11:51:00 AM, the precision timer is working!"
     send_email(subject, body)
