@@ -69,13 +69,20 @@ def wait_for_precision_window(target_hour_utc, target_minute_utc):
             time.sleep(0.01)
 
 if __name__ == "__main__":
-    # Test target set for 08:51:00 UTC (11:51:00 AM Israel Time)
-    target_h = 8
-    target_m = 51
+    # Test target set for 09:04:00 UTC (12:04:00 PM Israel Time)
+    target_h = 9
+    target_m = 4
     
     print(f"Script started. Waiting for {target_h:02}:{target_m:02}:00 UTC...")
     wait_for_precision_window(target_h, target_m)
     
-    subject = "Arbox Agent: Precision Timing Test (11:51 AM)"
-    body = f"This email was fired at exactly {datetime.now(timezone.utc).strftime('%H:%M:%S')} UTC.\nIf you received this within seconds of 11:51:00 AM, the precision timer is working!"
+    # Simulate a booking firing
+    print(f"[SHARP] {datetime.now(timezone.utc).strftime('%H:%M:%S.%f')} - FIRING ARBOX BOOKING API CALL...")
+    
+    subject = "Arbox Agent: Precision Timing Test (12:04 PM)"
+    body = f"High-Precision Test Notification\n" \
+           f"Sent exactly at: {datetime.now(timezone.utc).strftime('%H:%M:%S.%f')} UTC\n" \
+           f"Target was: {target_h:02}:{target_m:02}:00 UTC\n\n" \
+           f"If the email arrives later, it's due to Gmail/SMTP delivery lag, " \
+           f"but the logs will show the script hit the second exactly."
     send_email(subject, body)
