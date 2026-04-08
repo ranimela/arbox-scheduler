@@ -72,6 +72,15 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0):
     print(f"--- PRECISION COUNTDOWN ENGAGED ---")
     print(f"Target Time: {target_time.strftime('%H:%M:%S')} UTC (21:00:00 Israel)")
     
+    # Notify the user that the agent is up and waiting
+    send_email(
+        subject="Arbox Agent: READY FOR LAUNCH 🚀",
+        body=f"The agent has successfully arrived at the starting line.\n\n"
+             f"Current Time: {now_utc.strftime('%H:%M:%S')} UTC\n"
+             f"Target Launch: {target_time.strftime('%H:%M:%S')} UTC (21:00:00 Israel)\n\n"
+             f"I am now standing by. I will fire your registration exactly at the top of the hour."
+    )
+    
     while True:
         now = datetime.now(timezone.utc)
         remaining = (target_time - now).total_seconds()
