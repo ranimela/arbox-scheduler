@@ -64,8 +64,8 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0):
     now_utc = datetime.now(timezone.utc)
     target_time = now_utc.replace(hour=target_hour_utc, minute=target_minute_utc, second=0, microsecond=0)
     
-    # Only wait if we are within 10 minutes of the target (to avoid waiting 23 hours if run manually)
-    if (target_time - now_utc).total_seconds() > 600 or (target_time - now_utc).total_seconds() < 0:
+    # Only wait if we are within 120 minutes of the target (to avoid waiting 23 hours if run manually)
+    if (target_time - now_utc).total_seconds() > 7200 or (target_time - now_utc).total_seconds() < 0:
         print(f"Skipping wait: Not in the precision window. Current UTC: {now_utc.strftime('%H:%M:%S')}")
         return
 
