@@ -260,6 +260,8 @@ def generate_html_table(classes_info, date_range_str, status_html=""):
 </body>
 </html>
 """
+    with open('schedule.html', 'w', encoding='utf-8') as f:
+        f.write(html_content)
     return html_content
 
 def main():

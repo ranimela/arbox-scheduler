@@ -1,8 +1,6 @@
 name: Arbox Scheduler Agent
 
 on:
-  push:
-    branches: [main]
   schedule:
     # Runs at 16:00 UTC (19:00 Israel Time) every day
     # Arriving 2 hours early to beat GitHub's massive delays
