@@ -33,17 +33,20 @@ TARGET_HOUR = os.getenv('TARGET_HOUR', '08:00')
 # SET TO False TO ACTUALLY BOOK CLASSES
 DRY_RUN = False
 
-def send_email(subject, body):
+def send_email(subject, body, html=None):
     if not SMTP_PASS:
         print("Skipping email: SMTP_PASS not set.")
         return False
     
     try:
-        msg = MIMEMultipart()
+        msg = MIMEMultipart('alternative')
         msg['From'] = SMTP_USER
         msg['To'] = EMAIL
         msg['Subject'] = subject
+        
         msg.attach(MIMEText(body, 'plain'))
+        if html:
+            msg.attach(MIMEText(html, 'html'))
         
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
@@ -56,16 +59,20 @@ def send_email(subject, body):
         print(f"Failed to send email: {e}")
         return False
 
-def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0):
+def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_wake_hour_utc=16, expected_wake_minute_utc=0):
     """
-    If the script starts early (e.g. at 17:55 UTC), it will wait
-    until exactly 18:00:00 UTC to ensure sub-second precision.
+    If the script starts early, it will wait until exactly the target time.
     """
     now_utc = datetime.now(timezone.utc)
     target_time = now_utc.replace(hour=target_hour_utc, minute=target_minute_utc, second=0, microsecond=0)
     
-    # Only wait if we are within 120 minutes of the target (to avoid waiting 23 hours if run manually)
-    if (target_time - now_utc).total_seconds() > 7200 or (target_time - now_utc).total_seconds() < 0:
+    # Calculate the expected wake-up time to report delays
+    expected_wake = now_utc.replace(hour=expected_wake_hour_utc, minute=expected_wake_minute_utc, second=0, microsecond=0)
+    delay_delta = now_utc - expected_wake
+    delay_mins = int(delay_delta.total_seconds() / 60)
+    
+    # Only wait if we are within 150 minutes of the target
+    if (target_time - now_utc).total_seconds() > 9000 or (target_time - now_utc).total_seconds() < 0:
         print(f"Skipping wait: Not in the precision window. Current UTC: {now_utc.strftime('%H:%M:%S')}")
         return
 
@@ -73,12 +80,18 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0):
     print(f"Target Time: {target_time.strftime('%H:%M:%S')} UTC (21:00:00 Israel)")
     
     # Notify the user that the agent is up and waiting
+    status_label = "READY FOR LAUNCH 🚀"
+    if delay_mins > 5:
+        status_label += f" (Delayed {delay_mins}m)"
+        
     send_email(
-        subject="Arbox Agent: READY FOR LAUNCH 🚀",
-        body=f"The agent has successfully arrived at the starting line.\n\n"
-             f"Current Time: {now_utc.strftime('%H:%M:%S')} UTC\n"
-             f"Target Launch: {target_time.strftime('%H:%M:%S')} UTC (21:00:00 Israel)\n\n"
-             f"I am now standing by. I will fire your registration exactly at the top of the hour."
+        subject=f"Arbox Agent: {status_label}",
+        body=f"The agent has arrived at the starting line and is standing by.\n\n"
+             f"Expected Wake-up: {expected_wake.strftime('%H:%M:%S')} UTC (19:00:00 Israel)\n"
+             f"Actual Wake-up:   {now_utc.strftime('%H:%M:%S')} UTC ({ (now_utc + timedelta(hours=3)).strftime('%H:%M:%S') } Israel)\n"
+             f"GitHub Delay:     {delay_mins} minutes\n\n"
+             f"Target Launch:    {target_time.strftime('%H:%M:%S')} UTC (21:00:00 Israel)\n\n"
+             f"The registration will fire exactly at the top of the hour."
     )
     
     while True:
@@ -93,7 +106,6 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0):
             print(f"T-minus {int(remaining)} seconds...", end='\r')
             time.sleep(0.5)
         else:
-            # High-frequency polling for the last second
             time.sleep(0.01)
 
 def book_class(session, schedule_id):
@@ -113,12 +125,18 @@ def book_class(session, schedule_id):
 
     try:
         resp = session.post(url, json=payload)
-        if resp.status_code == 200:
-            msg = f"Successfully booked class {schedule_id}!"
+        resp_json = resp.json()
+        
+        # Check for success or already registered
+        is_already_in = "alreadyRegistered" in str(resp_json)
+        
+        if resp.status_code == 200 or is_already_in:
+            status = "CONFIRMED" if resp.status_code == 200 else "ALREADY REGISTERED"
+            msg = f"Successfully secured spot! ({status})"
             print(msg)
             return True, msg
         else:
-            msg = f"Failed to book class {schedule_id}: {resp.status_code} {resp.text}"
+            msg = f"Failed to book: {resp.status_code} {resp.text}"
             print(msg)
             return False, msg
     except Exception as e:
@@ -126,86 +144,82 @@ def book_class(session, schedule_id):
         print(msg)
         return False, msg
 
-def generate_html_table(classes_info, date_range_str):
+def generate_html_table(classes_info, date_range_str, status_html=""):
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Schedule for {date_range_str}</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
         :root {{
-            --bg-color: #0f172a;
-            --text-color: #f8fafc;
-            --card-bg: rgba(30, 41, 59, 0.7);
+            --bg-color: #f8fafc;
+            --text-color: #1e293b;
+            --card-bg: #ffffff;
             --accent: #3b82f6;
-            --accent-hover: #60a5fa;
-            --table-border: #334155;
-            --row-hover: rgba(59, 130, 246, 0.1);
-            --target-row: rgba(34, 197, 94, 0.15);
+            --table-border: #e2e8f0;
+            --target-row: #f0fdf4;
         }}
         body {{
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
             color: var(--text-color);
-            min-height: 100vh;
             margin: 0;
-            padding: 2rem;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
+            padding: 20px;
         }}
         .container {{
             background: var(--card-bg);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 16px;
-            padding: 2rem;
-            width: 100%;
-            max-width: 900px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--table-border);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 600px;
+            margin: 0 auto;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }}
-        h1 {{
-            margin-top: 0;
+        .status-header {{
             text-align: center;
-            color: var(--accent-hover);
+            padding: 16px;
+            margin-bottom: 24px;
+            border-radius: 8px;
+            font-weight: 600;
         }}
+        .status-success {{ background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }}
+        .status-failure {{ background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }}
         table {{
             width: 100%;
             border-collapse: collapse;
-            margin-top: 1.5rem;
         }}
         th, td {{
-            padding: 1rem;
+            padding: 12px;
             text-align: left;
             border-bottom: 1px solid var(--table-border);
         }}
-        tr.target {{
-            background-color: var(--target-row);
+        th {{
+            color: #64748b;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }}
+        tr.target {{ background-color: var(--target-row); }}
         .badge {{
-            padding: 0.25rem 0.75rem;
+            padding: 4px 12px;
             border-radius: 9999px;
-            font-size: 0.85rem;
-            font-weight: 500;
+            font-size: 11px;
+            font-weight: 600;
         }}
-        .booked {{ background: #16a34a; color: white; }}
-        .open {{ background: #3b82f6; color: white; }}
+        .booked {{ background: #22c55e; color: white; }}
+        .missed {{ background: #ef4444; color: white; }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Gorillot Agent - Schedule Report</h1>
-        <p style="text-align:center">Looking for: {", ".join(TARGET_DAYS)} at {TARGET_HOUR}</p>
+        <h2 style="text-align:center; margin-top:0;">Gorillot Booking Report</h2>
+        {status_html}
+        <p style="text-align:center; font-size:14px; color:#64748b;">Schedule for {date_range_str}</p>
         <table>
             <thead>
                 <tr>
-                    <th>Day</th>
-                    <th>Date</th>
-                    <th>Hour</th>
+                    <th>Time</th>
                     <th>Training</th>
-                    <th>Coach</th>
                     <th>Status</th>
                 </tr>
             </thead>
@@ -214,16 +228,17 @@ def generate_html_table(classes_info, date_range_str):
     for cls in classes_info:
         is_target = cls['day'] in TARGET_DAYS and cls['hour'] == TARGET_HOUR
         row_class = "target" if is_target else ""
-        status_badge = '<span class="badge booked">Booked!</span>' if cls.get('was_booked') else '<span class="badge open">Available</span>'
         
+        if is_target:
+            status_badge = '<span class="badge booked">SECURED</span>' if cls.get('was_booked') else '<span class="badge missed">MISSED</span>'
+        else:
+            status_badge = '<span style="color:#cbd5e1">-</span>'
+            
         html_content += f"""
                 <tr class="{row_class}">
-                    <td>{cls['day']}</td>
-                    <td>{cls['date']}</td>
-                    <td>{cls['hour']}</td>
+                    <td><strong>{cls['hour']}</strong></td>
                     <td>{cls['training']}</td>
-                    <td>{cls['coach']}</td>
-                    <td>{status_badge if is_target else ''}</td>
+                    <td>{status_badge}</td>
                 </tr>"""
 
     html_content += """
@@ -233,8 +248,7 @@ def generate_html_table(classes_info, date_range_str):
 </body>
 </html>
 """
-    with open('schedule.html', 'w', encoding='utf-8') as f:
-        f.write(html_content)
+    return html_content
 
 def main():
     if not EMAIL or not PASSWORD:
@@ -338,18 +352,31 @@ def main():
 
     # 4. Final Processing & Email Report
     classes_info.sort(key=lambda x: (x['date'], x['hour']))
-    generate_html_table(classes_info, tomorrow)
     
-    if booking_summaries:
-        subject = f"Arbox Agent Status: Successful Target Match"
-        body = "Arbox Gym Booking Report\n\n" + "\n".join(booking_summaries)
-        send_email(subject, body)
+    # Determine overall success
+    any_target = any(cls['day'] in TARGET_DAYS and cls['hour'] == TARGET_HOUR for cls in classes_info)
+    all_targets_booked = all(cls['was_booked'] for cls in classes_info if (cls['day'] in TARGET_DAYS and cls['hour'] == TARGET_HOUR))
+    
+    if any_target:
+        if all_targets_booked:
+            status_html = '<div class="status-header status-success">✅ MISSION SUCCESS: Booking Secured</div>'
+            subject = "✅ SUCCESS: Arbox Booking Confirmed"
+        else:
+            status_html = '<div class="status-header status-failure">⚠️ PARTIAL SUCCESS or FAILURE: Please Check</div>'
+            subject = "⚠️ ALERT: Arbox Booking Issue"
     else:
-        print(f"No target classes found for {tomorrow} to book.")
-        # Update user even if no target classes found
-        subject = f"Arbox Agent Status: No sessions found for {tomorrow}"
-        body = f"Checked the schedule for tomorrow ({tomorrow}).\nNo 8:00 AM slots found for the target days: {', '.join(TARGET_DAYS)}."
-        send_email(subject, body)
+        status_html = '<div class="status-header" style="background: rgba(148, 163, 184, 0.1); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.2)">INFO: No Target Sessions Found Today</div>'
+        subject = "ℹ️ INFO: No target sessions tomorrow"
+
+    generate_html_table(classes_info, tomorrow, status_html)
+    
+    # Send the email with the HTML report
+    with open('schedule.html', 'r', encoding='utf-8') as f:
+        html_body = f.read()
+        
+    summary_text = "\n".join(booking_summaries) if booking_summaries else f"No target slots found for {tomorrow}."
+        
+    send_email(subject, summary_text, html=html_body)
 
 if __name__ == '__main__':
     main()
