@@ -26,9 +26,13 @@ SMTP_PORT = 587
 
 IDENTIFIER = "f1UhUDad1588686203"
 
-# TARGET SLOTS (Edit these or use GitHub Variables to change your schedule)
-TARGET_DAYS = os.getenv('TARGET_DAYS', 'Sunday,Tuesday,Thursday,Friday').split(',')
-TARGET_HOUR = os.getenv('TARGET_HOUR', '08:00')
+# TARGET CONFIGURATION (Custom Per-Day Schedule)
+TARGET_CONFIG = {
+    'Sunday':   {'time': '08:30', 'coach': 'בר טנג\'י'},
+    'Tuesday':  {'time': '18:30', 'coach': ''}, 
+    'Thursday': {'time': '08:30', 'coach': 'שיראל ריצמן'},
+    'Friday':   {'time': '08:30', 'coach': 'דניאל טנג\'י'}
+}
 
 # SET TO False TO ACTUALLY BOOK CLASSES
 DRY_RUN = False
@@ -226,11 +230,19 @@ def generate_html_table(classes_info, date_range_str, status_html=""):
             <tbody>
 """
     for cls in classes_info:
-        is_target = cls['day'] in TARGET_DAYS and cls['hour'] == TARGET_HOUR
+        day_config = TARGET_CONFIG.get(cls['day'])
+        is_target = day_config and cls['hour'] == day_config['time']
+        
         row_class = "target" if is_target else ""
         
+        # Determine status text and badge
         if is_target:
-            status_badge = '<span class="badge booked">SECURED</span>' if cls.get('was_booked') else '<span class="badge missed">MISSED</span>'
+            if cls.get('was_booked'):
+                status_badge = '<span class="badge booked">SECURED</span>'
+            elif cls.get('best_match'):
+                status_badge = '<span class="badge missed" style="background:#ef4444">MISSED</span>'
+            else:
+                status_badge = '<span class="badge open" style="opacity: 0.5;">-</span>'
         else:
             status_badge = '<span style="color:#cbd5e1">-</span>'
             
@@ -290,9 +302,13 @@ def main():
 
     # 2. Fetch schedule for tomorrow ONLY
     today = datetime.now()
-    tomorrow = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+    tomorrow_obj = today + timedelta(days=1)
+    tomorrow = tomorrow_obj.strftime("%Y-%m-%d")
+    tomorrow_day = tomorrow_obj.strftime("%A")
     
-    print(f"Checking schedule for tomorrow ({tomorrow})...")
+    day_config = TARGET_CONFIG.get(tomorrow_day)
+    
+    print(f"Checking schedule for tomorrow ({tomorrow}, {tomorrow_day})...")
     schedule_url = 'https://apiappv2.arboxapp.com/api/v2/site/schedule/betweenDates'
     payload = {"from": tomorrow, "to": tomorrow, "locations_box_id": int(LOCATION_ID)}
     
@@ -302,6 +318,32 @@ def main():
     classes_info = []
     booking_summaries = []
     
+    # 3. Identify the best match based on config
+    best_match_id = None
+    if day_config:
+        target_time = day_config['time']
+        preferred_coach = day_config['coach']
+        
+        matches = [e for e in events if e.get('time') == target_time]
+        
+        if matches:
+            # If multiple matches, prioritize the coach
+            best_match = None
+            if preferred_coach:
+                for m in matches:
+                    coach_dict = m.get('coach') or {}
+                    full_name = coach_dict.get('full_name', '')
+                    if preferred_coach in full_name:
+                        best_match = m
+                        break
+            
+            # If no coach match found or no preference, take the first one
+            if not best_match:
+                best_match = matches[0]
+                
+            best_match_id = best_match.get('id')
+            print(f"BEST MATCH FOUND: {tomorrow_day} at {target_time} with {best_match.get('coach', {}).get('full_name', 'Unknown')}")
+
     for entry in events:
         try:
             dt_str = entry.get('date')
@@ -323,6 +365,7 @@ def main():
                 coach = "Unknown"
             
             schedule_id = entry.get('id')
+            is_best_match = (schedule_id == best_match_id)
             
             class_data = {
                 'day': day_name,
@@ -331,14 +374,12 @@ def main():
                 'training': training,
                 'coach': coach,
                 'id': schedule_id,
-                'was_booked': False
+                'was_booked': False,
+                'best_match': is_best_match
             }
 
-            # 3. Target Matching & Booking
-            if day_name in TARGET_DAYS and hour == TARGET_HOUR:
-                msg_start = f"TARGET MATCH FOUND: {day_name} at {hour}"
-                print(msg_start)
-                
+            # 4. Attempt Booking if it's the best match
+            if is_best_match:
                 success, log_msg = book_class(session, schedule_id)
                 class_data['was_booked'] = success
                 
@@ -354,8 +395,8 @@ def main():
     classes_info.sort(key=lambda x: (x['date'], x['hour']))
     
     # Determine overall success
-    any_target = any(cls['day'] in TARGET_DAYS and cls['hour'] == TARGET_HOUR for cls in classes_info)
-    all_targets_booked = all(cls['was_booked'] for cls in classes_info if (cls['day'] in TARGET_DAYS and cls['hour'] == TARGET_HOUR))
+    any_target = (day_config is not None)
+    all_targets_booked = any(cls['was_booked'] for cls in classes_info if cls['best_match'])
     
     if any_target:
         if all_targets_booked:
