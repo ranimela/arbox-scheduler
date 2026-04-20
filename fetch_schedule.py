@@ -34,6 +34,11 @@ TARGET_CONFIG = {
     'Friday':   {'time': '08:30', 'coach': 'דניאל טנג\'י'}
 }
 
+# ONE-TIME OVERRIDES (Date-specific exceptions)
+DATE_OVERRIDES = {
+    "2026-04-21": {"time": "08:30", "coach": "רוני שחם"}
+}
+
 # SET TO False TO ACTUALLY BOOK CLASSES
 DRY_RUN = False
 
@@ -308,7 +313,11 @@ def main():
     tomorrow = tomorrow_obj.strftime("%Y-%m-%d")
     tomorrow_day = tomorrow_obj.strftime("%A")
     
-    day_config = TARGET_CONFIG.get(tomorrow_day)
+    # 2. Check for overrides or use the regular day config
+    day_config = DATE_OVERRIDES.get(tomorrow, TARGET_CONFIG.get(tomorrow_day))
+    
+    if tomorrow in DATE_OVERRIDES:
+        print(f"!!! DATE OVERRIDE DETECTED FOR {tomorrow}: Using time {day_config['time']} with coach {day_config['coach']}")
     
     print(f"Checking schedule for tomorrow ({tomorrow}, {tomorrow_day})...")
     schedule_url = 'https://apiappv2.arboxapp.com/api/v2/site/schedule/betweenDates'
