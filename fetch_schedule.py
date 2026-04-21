@@ -36,7 +36,7 @@ TARGET_CONFIG = {
 
 # ONE-TIME OVERRIDES (Date-specific exceptions)
 DATE_OVERRIDES = {
-    "2026-04-21": {"time": "08:30", "coach": "רוני שחם"}
+    # No current overrides
 }
 
 # SET TO False TO ACTUALLY BOOK CLASSES
