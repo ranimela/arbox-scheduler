@@ -67,9 +67,10 @@ def send_email(subject, body, html=None):
         print(f"Failed to send email: {e}")
         return False
 
-def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_wake_hour_utc=16, expected_wake_minute_utc=0):
+def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_wake_hour_utc=16, expected_wake_minute_utc=0, pre_notify_msg=None):
     """
     If the script starts early, it will wait until exactly the target time.
+    Sends a status update at 20:59 (1 minute before launch).
     """
     now_utc = datetime.now(timezone.utc)
     target_time = now_utc.replace(hour=target_hour_utc, minute=target_minute_utc, second=0, microsecond=0)
@@ -79,7 +80,7 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_
     delay_delta = now_utc - expected_wake
     delay_mins = int(delay_delta.total_seconds() / 60)
     
-    # Only wait if we are within 150 minutes of the target
+    # Only wait if we are within the window
     if (target_time - now_utc).total_seconds() > 9000 or (target_time - now_utc).total_seconds() < 0:
         print(f"Skipping wait: Not in the precision window. Current UTC: {now_utc.strftime('%H:%M:%S')}")
         return
@@ -87,7 +88,7 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_
     print(f"--- PRECISION COUNTDOWN ENGAGED ---")
     print(f"Target Time: {target_time.strftime('%H:%M:%S')} UTC (21:00:00 Israel)")
     
-    # Notify the user that the agent is up and waiting
+    # Initial "I am here" notification
     status_label = "READY FOR LAUNCH 🚀"
     if delay_mins > 5:
         status_label += f" (Delayed {delay_mins}m)"
@@ -102,19 +103,33 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_
              f"The registration will fire exactly at the top of the hour."
     )
     
+    has_sent_pre_notification = False
+    
     while True:
         now = datetime.now(timezone.utc)
         remaining = (target_time - now).total_seconds()
         
+        # 20:59 Notification (60 seconds before target)
+        if 59 <= remaining <= 61 and not has_sent_pre_notification:
+            print("\n[20:59] Sending T-minus 1 minute status update...")
+            send_email(
+                subject="🕒 T-minus 1 Minute: Arbox Agent Standing By",
+                body=f"Registration opens in 60 seconds.\n\n"
+                     f"Targeting Workout:\n{pre_notify_msg or 'No specific target found.'}\n\n"
+                     f"Firing at 21:00:00 sharp."
+            )
+            has_sent_pre_notification = True
+
         if remaining <= 0:
-            print(f"BEEP BEEP BEEP! 21:00:00 REACHED! GO GO GO! (Actual: {now.strftime('%H:%M:%S.%f')})")
+            print(f"\nBEEP BEEP BEEP! 21:00:00 REACHED! GO GO GO! (Actual: {now.strftime('%H:%M:%S.%f')})")
             break
             
         if remaining > 1:
             print(f"T-minus {int(remaining)} seconds...", end='\r')
             time.sleep(0.5)
         else:
-            time.sleep(0.01)
+            # High-precision sleep as we get closer than 1 second
+            time.sleep(0.001)
 
 def book_class(session, schedule_id):
     """
@@ -235,7 +250,7 @@ def generate_html_table(classes_info, date_range_str, status_html=""):
 """
     for cls in classes_info:
         day_config = TARGET_CONFIG.get(cls['day'])
-        is_target = day_config and cls['hour'] == day_config['time']
+        is_target = cls['best_match']
         
         row_class = "target" if is_target else ""
         
@@ -243,10 +258,8 @@ def generate_html_table(classes_info, date_range_str, status_html=""):
         if is_target:
             if cls.get('was_booked'):
                 status_badge = '<span class="badge booked">SECURED</span>'
-            elif cls.get('best_match'):
-                status_badge = '<span class="badge missed" style="background:#ef4444">MISSED</span>'
             else:
-                status_badge = '<span class="badge open" style="opacity: 0.5;">-</span>'
+                status_badge = '<span class="badge missed" style="background:#ef4444">MISSED</span>'
         else:
             status_badge = '<span style="color:#cbd5e1">-</span>'
             
@@ -285,13 +298,10 @@ def main():
         'User-Agent': 'Mozilla/5.0'
     }
 
-    # 1. Start Precision Timer (Wait for registration window opening)
-    wait_for_precision_window()
-
     session = requests.Session()
     session.headers.update(base_headers)
     
-    # 1. Login
+    # 1. Login Immediately (Don't wait for 21:00)
     login_url = 'https://apiappv2.arboxapp.com/api/v2/user/siteLogin'
     try:
         resp = session.post(login_url, json={"email": EMAIL, "password": PASSWORD, "phone": ""})
@@ -306,128 +316,103 @@ def main():
         print(f"Login error: {e}")
         return
 
-    # 2. Fetch schedule for tomorrow ONLY
+    # 2. Fetch schedule for tomorrow immediately to find the target ID
     today = datetime.now()
     tomorrow_obj = today + timedelta(days=1)
     tomorrow = tomorrow_obj.strftime("%Y-%m-%d")
     tomorrow_day = tomorrow_obj.strftime("%A")
     
-    # 2. Check for overrides or use the regular day config
     day_config = DATE_OVERRIDES.get(tomorrow, TARGET_CONFIG.get(tomorrow_day))
     
-    if tomorrow in DATE_OVERRIDES:
-        print(f"!!! DATE OVERRIDE DETECTED FOR {tomorrow}: Using time {day_config['time']} with coach {day_config['coach']}")
+    target_class_id = None
+    target_summary = "Searching..."
     
-    print(f"Checking schedule for tomorrow ({tomorrow}, {tomorrow_day})...")
+    print(f"Pre-scanning schedule for {tomorrow}...")
     schedule_url = 'https://apiappv2.arboxapp.com/api/v2/site/schedule/betweenDates'
     payload = {"from": tomorrow, "to": tomorrow, "locations_box_id": int(LOCATION_ID)}
     
-    resp = session.post(schedule_url, json=payload)
-    events = resp.json().get("data", [])
-    
+    try:
+        resp = session.post(schedule_url, json=payload)
+        events = resp.json().get("data", [])
+        
+        if day_config:
+            target_time = day_config['time']
+            preferred_coach = day_config['coach']
+            matches = [e for e in events if e.get('time') == target_time]
+            
+            if matches:
+                best_match = None
+                if preferred_coach:
+                    for m in matches:
+                        coach_dict = m.get('coach') or {}
+                        if preferred_coach in coach_dict.get('full_name', ''):
+                            best_match = m
+                            break
+                if not best_match:
+                    best_match = matches[0]
+                
+                target_class_id = best_match.get('id')
+                coach_name = best_match.get('coach', {}).get('full_name', 'Unknown')
+                target_summary = f"{tomorrow_day} {tomorrow} at {target_time} (Coach: {coach_name})"
+                print(f"TARGET ACQUIRED: {target_summary}")
+            else:
+                target_summary = f"No class found at {target_time} for {tomorrow_day}."
+                print(f"WARNING: {target_summary}")
+    except Exception as e:
+        print(f"Pre-scan error: {e}")
+
+    # 3. Start Precision Timer with target info for the 20:59 notification
+    wait_for_precision_window(pre_notify_msg=target_summary)
+
+    # 4. EXECUTION (Fire immediately at 21:00:00)
     classes_info = []
     booking_summaries = []
     
-    # 3. Identify the best match based on config
-    best_match_id = None
-    if day_config:
-        target_time = day_config['time']
-        preferred_coach = day_config['coach']
+    if target_class_id:
+        success, log_msg = book_class(session, target_class_id)
+        status_icon = "✅" if success else "❌"
+        booking_summaries.append(f"{status_icon} {target_summary}: {log_msg}")
         
-        matches = [e for e in events if e.get('time') == target_time]
+        # We still fetch the full list for the final report table
+        resp = session.post(schedule_url, json=payload)
+        events = resp.json().get("data", [])
         
-        if matches:
-            # If multiple matches, prioritize the coach
-            best_match = None
-            if preferred_coach:
-                for m in matches:
-                    coach_dict = m.get('coach') or {}
-                    full_name = coach_dict.get('full_name', '')
-                    if preferred_coach in full_name:
-                        best_match = m
-                        break
-            
-            # If no coach match found or no preference, take the first one
-            if not best_match:
-                best_match = matches[0]
-                
-            best_match_id = best_match.get('id')
-            print(f"BEST MATCH FOUND: {tomorrow_day} at {target_time} with {best_match.get('coach', {}).get('full_name', 'Unknown')}")
-
-    for entry in events:
-        try:
-            dt_str = entry.get('date')
-            if not dt_str:
-                continue
-            dt_obj = datetime.strptime(dt_str, "%Y-%m-%d")
-            day_name = dt_obj.strftime("%A")
-            hour = entry.get('time', '')
-            
-            # Safe extraction of training name
-            box_cats = entry.get('box_categories') or {}
-            series_dict = entry.get('series') or {}
-            training = box_cats.get('name') or series_dict.get('series_name') or 'WOD'
-            
-            # Safe extraction of coach name
-            coach_dict = entry.get('coach') or {}
-            coach = coach_dict.get('full_name') or f"{coach_dict.get('first_name', '')} {coach_dict.get('last_name', '')}".strip()
-            if not coach:
-                coach = "Unknown"
-            
+        for entry in events:
             schedule_id = entry.get('id')
-            is_best_match = (schedule_id == best_match_id)
+            is_best_match = (schedule_id == target_class_id)
             
-            class_data = {
-                'day': day_name,
-                'date': dt_str,
+            # Extract basic info for table
+            hour = entry.get('time', '')
+            box_cats = entry.get('box_categories') or {}
+            training = box_cats.get('name') or entry.get('series', {}).get('series_name') or 'WOD'
+            
+            classes_info.append({
+                'day': tomorrow_day,
+                'date': tomorrow,
                 'hour': hour,
                 'training': training,
-                'coach': coach,
-                'id': schedule_id,
-                'was_booked': False,
+                'was_booked': True if (is_best_match and success) else False,
                 'best_match': is_best_match
-            }
+            })
+    else:
+        print("No target ID found. Skipping booking attempt.")
 
-            # 4. Attempt Booking if it's the best match
-            if is_best_match:
-                success, log_msg = book_class(session, schedule_id)
-                class_data['was_booked'] = success
-                
-                status_icon = "✅" if success else "❌"
-                booking_summaries.append(f"{status_icon} {day_name} {dt_str} {hour}: {log_msg}")
-
-            classes_info.append(class_data)
-        except Exception as e:
-            print(f"Skipping a class entry due to processing error: {e}")
-            continue
-
-    # 4. Final Processing & Email Report
-    classes_info.sort(key=lambda x: (x['date'], x['hour']))
-    
-    # Determine overall success
-    any_target = (day_config is not None)
-    all_targets_booked = any(cls['was_booked'] for cls in classes_info if cls['best_match'])
-    
-    if any_target:
-        if all_targets_booked:
+    # 5. Final Processing & Email Report
+    if classes_info:
+        classes_info.sort(key=lambda x: (x['date'], x['hour']))
+        any_booked = any(cls['was_booked'] for cls in classes_info if cls['best_match'])
+        
+        if any_booked:
             status_html = '<div class="status-header status-success">✅ MISSION SUCCESS: Booking Secured</div>'
             subject = "✅ SUCCESS: Arbox Booking Confirmed"
         else:
-            status_html = '<div class="status-header status-failure">⚠️ PARTIAL SUCCESS or FAILURE: Please Check</div>'
-            subject = "⚠️ ALERT: Arbox Booking Issue"
-    else:
-        status_html = '<div class="status-header" style="background: rgba(148, 163, 184, 0.1); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.2)">INFO: No Target Sessions Found Today</div>'
-        subject = "ℹ️ INFO: No target sessions tomorrow"
-
-    generate_html_table(classes_info, tomorrow, status_html)
-    
-    # Send the email with the HTML report
-    with open('schedule.html', 'r', encoding='utf-8') as f:
-        html_body = f.read()
-        
-    summary_text = "\n".join(booking_summaries) if booking_summaries else f"No target slots found for {tomorrow}."
-        
-    send_email(subject, summary_text, html=html_body)
+            status_html = '<div class="status-header status-failure">⚠️ FAILURE: Class was likely full</div>'
+            subject = "⚠️ ALERT: Arbox Booking Failed"
+            
+        generate_html_table(classes_info, tomorrow, status_html)
+        with open('schedule.html', 'r', encoding='utf-8') as f:
+            html_body = f.read()
+        send_email(subject, "\n".join(booking_summaries), html=html_body)
 
 if __name__ == '__main__':
     main()
