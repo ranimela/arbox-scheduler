@@ -16,7 +16,8 @@ USER_ID = os.getenv('ARBOX_USER_ID')
 MEMBERSHIP_USER_ID = os.getenv('ARBOX_MEMBERSHIP_USER_ID', '12165397')
 
 # NTFY Settings
-NTFY_TOPIC = os.getenv('NTFY_TOPIC', 'arbox-scheduler-ranimela')
+# Using a specific variable name to avoid collision with other projects
+NTFY_TOPIC = os.getenv('ARBOX_NTFY_TOPIC', 'arbox-scheduler-ranimela')
 
 IDENTIFIER = "f1UhUDad1588686203"
 
@@ -379,7 +380,7 @@ def main():
     else:
         print("No target ID found. Skipping booking attempt.")
 
-    # 5. Final Processing & Email Report
+    # 5. Final Processing & Notification Report
     if classes_info:
         classes_info.sort(key=lambda x: (x['date'], x['hour']))
         any_booked = any(cls['was_booked'] for cls in classes_info if cls['best_match'])
