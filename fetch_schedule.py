@@ -1,9 +1,6 @@
 import os
 import json
 import requests
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 import time
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
@@ -18,11 +15,8 @@ PASSWORD = os.getenv('ARBOX_PASSWORD')
 USER_ID = os.getenv('ARBOX_USER_ID')
 MEMBERSHIP_USER_ID = os.getenv('ARBOX_MEMBERSHIP_USER_ID', '12165397')
 
-# SMTP Settings
-SMTP_USER = os.getenv('SMTP_USER', EMAIL)
-SMTP_PASS = os.getenv('SMTP_PASS') # 16-char App Password
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
+# NTFY Settings
+NTFY_TOPIC = os.getenv('NTFY_TOPIC', 'arbox-scheduler-ranimela')
 
 IDENTIFIER = "f1UhUDad1588686203"
 
@@ -35,36 +29,29 @@ TARGET_CONFIG = {
 }
 
 # ONE-TIME OVERRIDES (Date-specific exceptions)
-DATE_OVERRIDES = {
-}
+DATE_OVERRIDES = {}
 
 # SET TO False TO ACTUALLY BOOK CLASSES
 DRY_RUN = False
 
-def send_email(subject, body, html=None):
-    if not SMTP_PASS:
-        print("Skipping email: SMTP_PASS not set.")
-        return False
-    
+def send_ntfy(title, message, priority="default", tags=""):
+    """Send push notification via ntfy.sh"""
+    print(f"Sending ntfy notification: {title}")
     try:
-        msg = MIMEMultipart('alternative')
-        msg['From'] = SMTP_USER
-        msg['To'] = EMAIL
-        msg['Subject'] = subject
-        
-        msg.attach(MIMEText(body, 'plain'))
-        if html:
-            msg.attach(MIMEText(html, 'html'))
-        
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.send_message(msg)
-        server.quit()
-        print(f"Email notification sent to {EMAIL}.")
+        headers = {
+            "Title": title.encode('utf-8'),
+            "Priority": priority,
+            "Tags": tags
+        }
+        requests.post(
+            f"https://ntfy.sh/{NTFY_TOPIC}",
+            data=message.encode('utf-8'),
+            headers=headers,
+            timeout=10
+        ).raise_for_status()
         return True
     except Exception as e:
-        print(f"Failed to send email: {e}")
+        print(f"Failed to send ntfy: {e}")
         return False
 
 def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_wake_hour_utc=16, expected_wake_minute_utc=0, pre_notify_msg=None):
@@ -93,14 +80,10 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_
     if delay_mins > 5:
         status_label += f" (Delayed {delay_mins}m)"
         
-    send_email(
-        subject=f"Arbox Agent: {status_label}",
-        body=f"The agent has arrived at the starting line and is standing by.\n\n"
-             f"Expected Wake-up: {expected_wake.strftime('%H:%M:%S')} UTC (19:00:00 Israel)\n"
-             f"Actual Wake-up:   {now_utc.strftime('%H:%M:%S')} UTC ({ (now_utc + timedelta(hours=3)).strftime('%H:%M:%S') } Israel)\n"
-             f"GitHub Delay:     {delay_mins} minutes\n\n"
-             f"Target Launch:    {target_time.strftime('%H:%M:%S')} UTC (21:00:00 Israel)\n\n"
-             f"The registration will fire exactly at the top of the hour."
+    send_ntfy(
+        title=f"Arbox Agent: {status_label}",
+        message=f"Agent is standing by.\nExpected: {expected_wake.strftime('%H:%M')} UTC\nGitHub Delay: {delay_mins}m\nTarget: 21:00:00 Israel",
+        tags="rocket,robot"
     )
     
     has_sent_pre_notification = False
@@ -112,11 +95,11 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_
         # 20:59 Notification (60 seconds before target)
         if 59 <= remaining <= 61 and not has_sent_pre_notification:
             print("\n[20:59] Sending T-minus 1 minute status update...")
-            send_email(
-                subject="🕒 T-minus 1 Minute: Arbox Agent Standing By",
-                body=f"Registration opens in 60 seconds.\n\n"
-                     f"Targeting Workout:\n{pre_notify_msg or 'No specific target found.'}\n\n"
-                     f"Firing at 21:00:00 sharp."
+            send_ntfy(
+                title="🕒 T-minus 1 Minute",
+                message=f"Targeting:\n{pre_notify_msg or 'No specific target found.'}",
+                priority="high",
+                tags="hourglass_flowing_sand,muscle"
             )
             has_sent_pre_notification = True
 
@@ -128,7 +111,6 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_
             print(f"T-minus {int(remaining)} seconds...", end='\r')
             time.sleep(0.5)
         else:
-            # High-precision sleep as we get closer than 1 second
             time.sleep(0.001)
 
 def book_class(session, schedule_id):
@@ -408,11 +390,13 @@ def main():
         else:
             status_html = '<div class="status-header status-failure">⚠️ FAILURE: Class was likely full</div>'
             subject = "⚠️ ALERT: Arbox Booking Failed"
-            
+
         generate_html_table(classes_info, tomorrow, status_html)
-        with open('schedule.html', 'r', encoding='utf-8') as f:
-            html_body = f.read()
-        send_email(subject, "\n".join(booking_summaries), html=html_body)
+        
+        ntfy_title = subject
+        ntfy_msg = "\n".join(booking_summaries)
+        ntfy_tags = "white_check_mark" if any_booked else "x"
+        send_ntfy(ntfy_title, ntfy_msg, priority="high", tags=ntfy_tags)
 
 if __name__ == '__main__':
     main()
