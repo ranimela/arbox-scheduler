@@ -1,12 +1,19 @@
 import os
 import json
 import requests
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Force UTF-8 for Windows terminal support
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 GYM_ID = os.getenv('ARBOX_BOX_ID', '80')
 LOCATION_ID = os.getenv('ARBOX_LOCATION_ID', '70')
@@ -17,7 +24,8 @@ MEMBERSHIP_USER_ID = os.getenv('ARBOX_MEMBERSHIP_USER_ID', '12165397')
 
 # NTFY Settings
 # Using a specific variable name to avoid collision with other projects
-NTFY_TOPIC = os.getenv('ARBOX_NTFY_TOPIC', 'arbox-scheduler-ranimela')
+# Falls back to default if the env var is missing or empty
+NTFY_TOPIC = os.getenv('ARBOX_NTFY_TOPIC') or 'arbox-scheduler-ranimela'
 
 IDENTIFIER = "f1UhUDad1588686203"
 
