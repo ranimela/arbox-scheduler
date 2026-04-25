@@ -332,16 +332,19 @@ def main():
                 
                 target_class_id = best_match.get('id')
                 coach_name = best_match.get('coach', {}).get('full_name', 'Unknown')
+                free_spots = best_match.get('free', 0)
+                total_spots = best_match.get('max_users', 0)
                 target_summary = f"{tomorrow_day} {tomorrow} at {target_time} (Coach: {coach_name})"
-                print(f"TARGET ACQUIRED: {target_summary}")
+                target_summary_with_spots = f"{target_summary}\nSpots: {free_spots}/{total_spots}"
+                print(f"TARGET ACQUIRED: {target_summary_with_spots}")
             else:
-                target_summary = f"No class found at {target_time} for {tomorrow_day}."
-                print(f"WARNING: {target_summary}")
+                target_summary_with_spots = f"No class found at {target_time} for {tomorrow_day}."
+                print(f"WARNING: {target_summary_with_spots}")
     except Exception as e:
         print(f"Pre-scan error: {e}")
 
     # 3. Start Precision Timer with target info for the 20:59 notification
-    wait_for_precision_window(pre_notify_msg=target_summary)
+    wait_for_precision_window(pre_notify_msg=target_summary_with_spots)
 
     # 4. EXECUTION (Fire immediately at 21:00:00)
     classes_info = []
