@@ -85,14 +85,9 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_
     print(f"Target Time: {target_time.strftime('%H:%M:%S')} UTC (21:00:00 Israel)")
     
     # Initial "I am here" notification
-    status_label = "READY FOR LAUNCH 🚀"
-    if delay_mins > 5:
-        status_label += f" (Delayed {delay_mins}m)"
-        
     send_ntfy(
-        title=f"Arbox Agent: {status_label}",
-        message=f"Agent is standing by.\nExpected: {expected_wake.strftime('%H:%M')} UTC\nGitHub Delay: {delay_mins}m\nTarget: 21:00:00 Israel",
-        tags="rocket,robot"
+        title="Arbox Agent Active",
+        message=f"Standing by for 21:00:00 registration.\nExpected wake-up: {expected_wake.strftime('%H:%M')} UTC\nGitHub Delay: {delay_mins}m"
     )
     
     has_sent_pre_notification = False
@@ -105,10 +100,9 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_
         if 59 <= remaining <= 61 and not has_sent_pre_notification:
             print("\n[20:59] Sending T-minus 1 minute status update...")
             send_ntfy(
-                title="🕒 T-minus 1 Minute",
-                message=f"Targeting:\n{pre_notify_msg or 'No specific target found.'}",
-                priority="high",
-                tags="hourglass_flowing_sand,muscle"
+                title="T-minus 1 Minute",
+                message=f"Targeting: {pre_notify_msg or 'No specific target found.'}",
+                priority="high"
             )
             has_sent_pre_notification = True
 
@@ -145,7 +139,7 @@ def book_class(session, schedule_id):
         is_already_in = "alreadyRegistered" in str(resp_json)
         
         if resp.status_code == 200 or is_already_in:
-            status = "CONFIRMED" if resp.status_code == 200 else "ALREADY REGISTERED"
+            status = "Confirmed" if resp.status_code == 200 else "Already Registered"
             msg = f"Successfully secured spot! ({status})"
             print(msg)
             return True, msg
@@ -240,17 +234,11 @@ def generate_html_table(classes_info, date_range_str, status_html=""):
             <tbody>
 """
     for cls in classes_info:
-        day_config = TARGET_CONFIG.get(cls['day'])
         is_target = cls['best_match']
-        
         row_class = "target" if is_target else ""
         
-        # Determine status text and badge
         if is_target:
-            if cls.get('was_booked'):
-                status_badge = '<span class="badge booked">SECURED</span>'
-            else:
-                status_badge = '<span class="badge missed" style="background:#ef4444">MISSED</span>'
+            status_badge = '<span class="badge booked">SECURED</span>' if cls.get('was_booked') else '<span class="badge missed" style="background:#ef4444">MISSED</span>'
         else:
             status_badge = '<span style="color:#cbd5e1">-</span>'
             
@@ -361,8 +349,9 @@ def main():
     
     if target_class_id:
         success, log_msg = book_class(session, target_class_id)
-        status_icon = "✅" if success else "❌"
-        booking_summaries.append(f"{status_icon} {target_summary}: {log_msg}")
+        # Clean the log message of any success/fail emojis
+        clean_log_msg = log_msg.replace("✅", "").replace("❌", "").strip()
+        booking_summaries.append(f"{target_summary}: {clean_log_msg}")
         
         # We still fetch the full list for the final report table
         resp = session.post(schedule_url, json=payload)
@@ -394,18 +383,16 @@ def main():
         any_booked = any(cls['was_booked'] for cls in classes_info if cls['best_match'])
         
         if any_booked:
-            status_html = '<div class="status-header status-success">✅ MISSION SUCCESS: Booking Secured</div>'
-            subject = "✅ SUCCESS: Arbox Booking Confirmed"
+            status_html = '<div class="status-header status-success">MISSION SUCCESS: Booking Secured</div>'
+            ntfy_title = "✅ Booking Confirmed"
         else:
-            status_html = '<div class="status-header status-failure">⚠️ FAILURE: Class was likely full</div>'
-            subject = "⚠️ ALERT: Arbox Booking Failed"
+            status_html = '<div class="status-header status-failure">FAILURE: Class was likely full</div>'
+            ntfy_title = "❌ Booking Failed"
 
         generate_html_table(classes_info, tomorrow, status_html)
         
-        ntfy_title = subject
         ntfy_msg = "\n".join(booking_summaries)
-        ntfy_tags = "white_check_mark" if any_booked else "x"
-        send_ntfy(ntfy_title, ntfy_msg, priority="high", tags=ntfy_tags)
+        send_ntfy(ntfy_title, ntfy_msg, priority="high")
 
 if __name__ == '__main__':
     main()
