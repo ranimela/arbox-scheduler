@@ -131,26 +131,40 @@ def book_class(session, schedule_id):
         print(f"[DRY RUN] Would book class with Schedule ID: {schedule_id}")
         return True, "Dry run success"
 
-    try:
-        resp = session.post(url, json=payload)
-        resp_json = resp.json()
-        
-        # Check for success or already registered
-        is_already_in = "alreadyRegistered" in str(resp_json)
-        
-        if resp.status_code == 200 or is_already_in:
-            status = "Confirmed" if resp.status_code == 200 else "Already Registered"
-            msg = f"Successfully secured spot! ({status})"
-            print(msg)
-            return True, msg
-        else:
-            msg = f"Failed to book: {resp.status_code} {resp.text}"
+    # Rapid-fire retry loop for peak-load connection drops
+    for attempt in range(1, 6):
+        try:
+            resp = session.post(url, json=payload, timeout=10)
+            resp_json = resp.json()
+            
+            # Check for success or already registered
+            is_already_in = "alreadyRegistered" in str(resp_json)
+            
+            if resp.status_code == 200 or is_already_in:
+                status = "Confirmed" if resp.status_code == 200 else "Already Registered"
+                msg = f"Successfully secured spot! ({status}) - Attempt {attempt}"
+                print(msg)
+                return True, msg
+            else:
+                msg = f"Failed to book: {resp.status_code} {resp.text}"
+                print(msg)
+                # If it's a specific "full" error, don't bother retrying
+                if "full" in msg.lower() or "limit" in msg.lower():
+                    return False, msg
+                
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            print(f"Attempt {attempt} failed (Connection Error): {e}")
+            if attempt == 5:
+                msg = f"Error during booking after 5 attempts: {e}"
+                print(msg)
+                return False, msg
+            time.sleep(0.1) # Rapid retry
+        except Exception as e:
+            msg = f"Unexpected error during booking: {e}"
             print(msg)
             return False, msg
-    except Exception as e:
-        msg = f"Error during booking: {e}"
-        print(msg)
-        return False, msg
+    
+    return False, "Max retries reached"
 
 def generate_html_table(classes_info, date_range_str, status_html=""):
     html_content = f"""<!DOCTYPE html>
