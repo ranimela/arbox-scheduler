@@ -305,6 +305,7 @@ def main():
     
     target_class_id = None
     target_summary = "Searching..."
+    target_summary_with_spots = "Searching..."
     
     print(f"Pre-scanning schedule for {tomorrow}...")
     schedule_url = 'https://apiappv2.arboxapp.com/api/v2/site/schedule/betweenDates'
