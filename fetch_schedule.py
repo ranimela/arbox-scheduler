@@ -34,7 +34,7 @@ TARGET_CONFIG = {
     'Sunday':   {'time': '08:30', 'coach': 'בר טנג\'י'},
     'Tuesday':  {'time': '18:30', 'coach': ''}, 
     'Thursday': {'time': '08:30', 'coach': 'שיראל ריצמן'},
-    'Friday':   {'time': '08:30', 'coach': 'דניאל טנג\'י'}
+    'Friday':   {'time': '08:30', 'coach': 'עמית גורן'}
 }
 
 # ONE-TIME OVERRIDES (Date-specific exceptions)
