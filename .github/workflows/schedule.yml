@@ -2,9 +2,9 @@ name: Arbox Scheduler Agent
 
 on:
   schedule:
-    # Runs at 15:00 UTC (18:00 Israel Time) every day
-    # Arriving 3 hours early to beat GitHub's massive delays
-    - cron: '0 15 * * *'
+    # Runs at 13:47 UTC (16:47 Israel Time) every day
+    # Arriving 4+ hours early on a non-hour mark to beat GitHub's massive delays
+    - cron: '47 13 * * *'
   
   workflow_dispatch:
 
