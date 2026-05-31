@@ -63,7 +63,7 @@ def send_ntfy(title, message, priority="default", tags=""):
         print(f"Failed to send ntfy: {e}")
         return False
 
-def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_wake_hour_utc=16, expected_wake_minute_utc=0, pre_notify_msg=None):
+def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_wake_hour_utc=13, expected_wake_minute_utc=47, pre_notify_msg=None):
     """
     If the script starts early, it will wait until exactly the target time.
     Sends a status update at 20:59 (1 minute before launch).
@@ -77,7 +77,7 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_
     delay_mins = int(delay_delta.total_seconds() / 60)
     
     # Only wait if we are within the window
-    if (target_time - now_utc).total_seconds() > 9000 or (target_time - now_utc).total_seconds() < 0:
+    if (target_time - now_utc).total_seconds() > 18000 or (target_time - now_utc).total_seconds() < 0:
         print(f"Skipping wait: Not in the precision window. Current UTC: {now_utc.strftime('%H:%M:%S')}")
         return
 
