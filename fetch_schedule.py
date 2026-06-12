@@ -320,6 +320,7 @@ def main():
     target_class_id = None
     target_summary = "Searching..."
     target_summary_with_spots = "Searching..."
+    is_already_booked = False
     
     print(f"Pre-scanning schedule for {tomorrow}...")
     schedule_url = 'https://apiappv2.arboxapp.com/api/v2/site/schedule/betweenDates'
@@ -346,12 +347,17 @@ def main():
                     best_match = matches[0]
                 
                 target_class_id = best_match.get('id')
+                booking_opt = best_match.get('booking_option', '')
+                is_already_booked = 'delete' in str(booking_opt).lower() or 'cancel' in str(booking_opt).lower()
+                
                 coach_name = best_match.get('coach', {}).get('full_name', 'Unknown')
                 free_spots = best_match.get('free', 0)
                 total_spots = best_match.get('max_users', 0)
                 target_summary = f"{tomorrow_day} {tomorrow} at {target_time} (Coach: {coach_name})"
                 target_summary_with_spots = f"{target_summary}\nSpots: {free_spots}/{total_spots}"
                 print(f"TARGET ACQUIRED: {target_summary_with_spots}")
+                if is_already_booked:
+                    print("User is already registered for this class.")
             else:
                 target_summary_with_spots = f"No class found at {target_time} for {tomorrow_day}."
                 print(f"WARNING: {target_summary_with_spots}")
@@ -359,14 +365,21 @@ def main():
         print(f"Pre-scan error: {e}")
 
     # 3. Start Precision Timer with target info for the 20:59 notification
-    wait_for_precision_window(pre_notify_msg=target_summary_with_spots)
+    if not is_already_booked:
+        wait_for_precision_window(pre_notify_msg=target_summary_with_spots)
+    else:
+        print("Class is already booked! Skipping precision wait.")
 
     # 4. EXECUTION (Fire immediately at 21:00:00)
     classes_info = []
     booking_summaries = []
     
     if target_class_id:
-        success, log_msg = book_class(session, target_class_id)
+        if is_already_booked:
+            success = True
+            log_msg = "Successfully secured spot! (Already Registered)"
+        else:
+            success, log_msg = book_class(session, target_class_id)
         # Clean the log message of any success/fail emojis
         clean_log_msg = log_msg.replace("✅", "").replace("❌", "").strip()
         booking_summaries.append(f"{target_summary}: {clean_log_msg}")
