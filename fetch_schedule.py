@@ -43,8 +43,32 @@ DATE_OVERRIDES = {}
 # SET TO False TO ACTUALLY BOOK CLASSES
 DRY_RUN = False
 
+def get_israel_time():
+    """Returns the current time in Israel (UTC+2 or UTC+3 depending on DST)"""
+    now_utc = datetime.now(timezone.utc)
+    month = now_utc.month
+    day = now_utc.day
+    # Israel DST: Friday before the last Sunday in March to the last Sunday in October
+    if 3 < month < 10:
+        is_dst = True
+    elif month == 3:
+        is_dst = (day >= 23)
+    elif month == 10:
+        is_dst = (day < 25)
+    else:
+        is_dst = False
+    offset = 3 if is_dst else 2
+    return now_utc + timedelta(hours=offset)
+
 def send_ntfy(title, message, priority="default", tags=""):
     """Send push notification via ntfy.sh"""
+    # Allowed notification window: 8:00 PM (20:00) to 9:30 PM (21:30) Israel Time
+    isr_now = get_israel_time()
+    isr_minutes = isr_now.hour * 60 + isr_now.minute
+    if not (1200 <= isr_minutes <= 1290):
+        print(f"Skipping ntfy notification (outside allowed window 20:00 - 21:30 Israel Time): {title}")
+        return False
+
     print(f"Sending ntfy notification: {title}")
     try:
         headers = {
