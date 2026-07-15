@@ -2,20 +2,20 @@ name: Arbox Scheduler Agent
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 on:
-  schedule:
-    # Spaced triggers to guarantee at least one wakes up before 21:00 Israel Time
-    - cron: '30 13 * * *' # 16:30 Israel
-    - cron: '0 14 * * *'  # 17:00 Israel
-    - cron: '30 14 * * *' # 17:30 Israel
-    - cron: '0 15 * * *'  # 18:00 Israel
-    - cron: '30 15 * * *' # 18:30 Israel
-    - cron: '0 16 * * *'  # 19:00 Israel
-    - cron: '30 16 * * *' # 19:30 Israel
-    - cron: '0 17 * * *'  # 20:00 Israel
-    - cron: '30 17 * * *' # 20:30 Israel
+  # schedule:
+  #   # Spaced triggers to guarantee at least one wakes up before 21:00 Israel Time
+  #   - cron: '30 13 * * *' # 16:30 Israel
+  #   - cron: '0 14 * * *'  # 17:00 Israel
+  #   - cron: '30 14 * * *' # 17:30 Israel
+  #   - cron: '0 15 * * *'  # 18:00 Israel
+  #   - cron: '30 15 * * *' # 18:30 Israel
+  #   - cron: '0 16 * * *'  # 19:00 Israel
+  #   - cron: '30 16 * * *' # 19:30 Israel
+  #   - cron: '0 17 * * *'  # 20:00 Israel
+  #   - cron: '30 17 * * *' # 20:30 Israel
   
   workflow_dispatch:
 
@@ -50,3 +50,12 @@ jobs:
           TARGET_HOUR: ${{ vars.TARGET_HOUR }}
         run: |
           python fetch_schedule.py
+
+      - name: Send Run Failure Alert via ntfy
+        if: failure()
+        run: |
+          curl -H "Title: ❌ Arbox Workflow Failed" \
+               -H "Priority: high" \
+               -H "Tags: warning,github" \
+               -d "The Arbox Scheduler workflow run has failed. Check run logs for details: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+               https://ntfy.sh/${{ secrets.ARBOX_NTFY_TOPIC || 'arbox-scheduler-ranimela' }}
