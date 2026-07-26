@@ -1,0 +1,9 @@
+{
+  "TARGET_CONFIG": {
+    "Sunday":   {"time": "08:30", "coach": "not דניאל טנג'י"},
+    "Tuesday":  {"time": "18:30", "coach": "not דניאל טנג'י", "type": "WOD"},
+    "Thursday": {"time": "08:30", "coach": "not דניאל טנג'י"},
+    "Friday":   {"time": "08:30", "coach": "not דניאל טנג'י"}
+  },
+  "DATE_OVERRIDES": {}
+}
