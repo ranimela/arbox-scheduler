@@ -457,14 +457,14 @@ def main():
             
             # Match by training type if specified (e.g., "WOD")
             if target_type:
-                target_info_list = [
-                    entry for entry in target_info_list
-                    if target_type.lower() in (
-                        entry.get('box_categories', {}).get('name') or 
-                        entry.get('series', {}).get('series_name') or 
-                        ''
-                    ).lower()
-                ]
+                def matches_training_type(entry_item):
+                    cat_name = ((entry_item.get('box_categories') or {}).get('name') or '').strip().lower()
+                    if cat_name:
+                        return target_type.lower() in cat_name
+                    ser_name = ((entry_item.get('series') or {}).get('series_name') or '').strip().lower()
+                    return target_type.lower() in ser_name
+
+                target_info_list = [entry for entry in target_info_list if matches_training_type(entry)]
             
             # Match by coach name if specified (supports "not Coach Name" syntax and fallback)
             ALWAYS_EXCLUDE_COACH = "דניאל טנג'י"

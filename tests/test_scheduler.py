@@ -37,3 +37,34 @@ def test_target_config_fallback():
     assert TARGET_CONFIG['Tuesday']['coach'] == 'not דניאל טנג\'י'
     assert TARGET_CONFIG['Thursday']['coach'] == 'not דניאל טנג\'י'
     assert TARGET_CONFIG['Friday']['coach'] == 'not דניאל טנג\'י'
+
+def test_category_matching_prioritizes_box_categories():
+    target_type = "WOD"
+    events = [
+        {
+            'id': 1,
+            'time': '18:30',
+            'box_categories': {'name': 'Weightlifting'},
+            'series': {'series_name': 'WOD ,שלישי,18:30'},
+            'coach': {'full_name': 'רוני שחם'}
+        },
+        {
+            'id': 2,
+            'time': '18:30',
+            'box_categories': {'name': 'WOD '},
+            'series': {'series_name': 'W.O.D,Tuesday,18:30'},
+            'coach': {'full_name': 'אופיר רודיטי'}
+        }
+    ]
+    
+    def matches_training_type(entry_item):
+        cat_name = ((entry_item.get('box_categories') or {}).get('name') or '').strip().lower()
+        if cat_name:
+            return target_type.lower() in cat_name
+        ser_name = ((entry_item.get('series') or {}).get('series_name') or '').strip().lower()
+        return target_type.lower() in ser_name
+
+    matched = [e for e in events if matches_training_type(e)]
+    assert len(matched) == 1
+    assert matched[0]['id'] == 2
+    assert matched[0]['coach']['full_name'] == 'אופיר רודיטי'
