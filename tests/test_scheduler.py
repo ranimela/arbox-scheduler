@@ -4,7 +4,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 from datetime import datetime, timezone
-from fetch_schedule import get_israel_time, generate_html_table, TARGET_CONFIG
+from fetch_schedule import get_israel_time, generate_html_table, TARGET_CONFIG, select_target_entry
 
 def test_get_israel_time():
     isr_now = get_israel_time()
@@ -68,3 +68,12 @@ def test_category_matching_prioritizes_box_categories():
     assert len(matched) == 1
     assert matched[0]['id'] == 2
     assert matched[0]['coach']['full_name'] == 'אופיר רודיטי'
+
+def test_select_target_entry():
+    entries = [
+        {'id': 10, 'coach': {'full_name': 'דניאל טנג\'י'}},
+        {'id': 20, 'coach': {'full_name': 'אופיר רודיטי'}}
+    ]
+    res = select_target_entry(entries, "not דניאל טנג'י")
+    assert res is not None
+    assert res['id'] == 20

@@ -7,3 +7,4 @@ gorillot_vendor.js
 .gemini/
 *.pyc
 __pycache__/
+session.json

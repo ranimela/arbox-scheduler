@@ -180,6 +180,36 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_
         else:
             time.sleep(0.001)
 
+def select_target_entry(target_info_list, target_coach, always_exclude="דניאל טנג'י"):
+    """Selects the best target class entry based on coach preferences and exclusion rules."""
+    if not target_info_list:
+        return None
+
+    def get_coach_name(entry_obj):
+        c_data = entry_obj.get('coach') or {}
+        if isinstance(c_data, dict):
+            return (c_data.get('full_name') or c_data.get('name') or f"{c_data.get('first_name', '')} {c_data.get('last_name', '')}").strip()
+        elif isinstance(c_data, str):
+            return c_data.strip()
+        return ''
+
+    if target_coach:
+        if target_coach.lower().startswith('not '):
+            exclude_coach = target_coach[4:].strip().lower()
+            for entry in target_info_list:
+                if exclude_coach not in get_coach_name(entry).lower():
+                    return entry
+        else:
+            for entry in target_info_list:
+                if target_coach.lower() in get_coach_name(entry).lower():
+                    return entry
+
+    for entry in target_info_list:
+        if always_exclude.lower() not in get_coach_name(entry).lower():
+            return entry
+
+    return None
+
 def book_class(session, schedule_id):
     """
     Attempts to book a class using the V2 Arbox API.
@@ -414,7 +444,7 @@ def main():
             sys.exit(1)
 
     # 2. Fetch schedule for tomorrow immediately to find the target ID
-    today = datetime.now()
+    today = get_israel_time()
     tomorrow_obj = today + timedelta(days=1)
     tomorrow = tomorrow_obj.strftime("%Y-%m-%d")
     tomorrow_day = tomorrow_obj.strftime("%A")
@@ -466,51 +496,10 @@ def main():
 
                 target_info_list = [entry for entry in target_info_list if matches_training_type(entry)]
             
-            # Match by coach name if specified (supports "not Coach Name" syntax and fallback)
-            ALWAYS_EXCLUDE_COACH = "דניאל טנג'י"
-            target_entry = None
-            
-            def get_coach_full_name(entry_obj):
-                c_data = entry_obj.get('coach') or {}
-                if isinstance(c_data, dict):
-                    return (c_data.get('full_name') or c_data.get('name') or f"{c_data.get('first_name', '')} {c_data.get('last_name', '')}").strip()
-                elif isinstance(c_data, str):
-                    return c_data.strip()
-                return ''
-
-            if target_coach:
-                if target_coach.lower().startswith('not '):
-                    exclude_coach = target_coach[4:].strip().lower()
-                    for entry in target_info_list:
-                        coach_name = get_coach_full_name(entry)
-                        if exclude_coach not in coach_name.lower():
-                            target_entry = entry
-                            break
-                else:
-                    # First try to find exact preferred coach
-                    for entry in target_info_list:
-                        coach_name = get_coach_full_name(entry)
-                        if target_coach.lower() in coach_name.lower():
-                            target_entry = entry
-                            break
-                    # Fallback: if preferred coach not found, choose any class NOT coached by דניאל טנג'י
-                    if not target_entry:
-                        for entry in target_info_list:
-                            coach_name = get_coach_full_name(entry)
-                            if ALWAYS_EXCLUDE_COACH.lower() not in coach_name.lower():
-                                target_entry = entry
-                                break
-            else:
-                # No specific coach requested: choose any class NOT coached by דניאל טנג'י
-                for entry in target_info_list:
-                    coach_name = get_coach_full_name(entry)
-                    if ALWAYS_EXCLUDE_COACH.lower() not in coach_name.lower():
-                        target_entry = entry
-                        break
+            target_entry = select_target_entry(target_info_list, target_coach)
             
             if target_entry:
                 target_class_id = target_entry.get('id')
-                training_name = target_entry.get('box_categories', {}).get('name') or 'Class'
                 coach_name = target_entry.get('coach', {}).get('name', 'Unknown')
                 
                 # Check registration status
