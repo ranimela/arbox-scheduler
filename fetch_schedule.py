@@ -41,10 +41,10 @@ IDENTIFIER = "f1UhUDad1588686203"
 
 # Default TARGET CONFIGURATION (Custom Per-Day Schedule)
 TARGET_CONFIG = {
-    'Sunday':   {'time': '08:30', 'coach': 'not דניאל טנג\'י'},
+    'Sunday':   {'time': '08:30', 'coach': 'not דניאל טנג\'י', 'type': 'WOD'},
     'Tuesday':  {'time': '18:30', 'coach': 'not דניאל טנג\'י', 'type': 'WOD'}, 
-    'Thursday': {'time': '08:30', 'coach': 'not דניאל טנג\'י'},
-    'Friday':   {'time': '08:30', 'coach': 'not דניאל טנג\'י'}
+    'Thursday': {'time': '08:30', 'coach': 'not דניאל טנג\'י', 'type': 'WOD'},
+    'Friday':   {'time': '08:30', 'coach': 'not דניאל טנג\'י', 'type': 'WOD'}
 }
 DATE_OVERRIDES = {}
 
