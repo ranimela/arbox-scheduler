@@ -41,10 +41,10 @@ IDENTIFIER = "f1UhUDad1588686203"
 
 # Default TARGET CONFIGURATION (Custom Per-Day Schedule)
 TARGET_CONFIG = {
-    'Sunday':   {'time': '08:30', 'coach': 'not דניאל טנג\'י', 'type': 'WOD'},
-    'Tuesday':  {'time': '18:30', 'coach': 'not דניאל טנג\'י', 'type': 'WOD'}, 
-    'Thursday': {'time': '08:30', 'coach': 'not דניאל טנג\'י', 'type': 'WOD'},
-    'Friday':   {'time': '08:30', 'coach': 'not דניאל טנג\'י', 'type': 'WOD'}
+    'Sunday':   {'time': '08:30', 'coach': 'not דניאל טנג\'י', 'type': 'WOD', 'series_id': 187541},
+    'Tuesday':  {'time': '18:30', 'coach': 'not דניאל טנג\'י', 'type': 'WOD', 'series_id': 3300}, 
+    'Thursday': {'time': '08:30', 'coach': 'not דניאל טנג\'י', 'type': 'WOD', 'series_id': 187542},
+    'Friday':   {'time': '08:30', 'coach': 'not דניאל טנג\'י', 'type': 'WOD', 'series_id': 2498}
 }
 DATE_OVERRIDES = {}
 
@@ -180,8 +180,8 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_
         else:
             time.sleep(0.001)
 
-def select_target_entry(target_info_list, target_coach, target_time="", always_exclude="דניאל טנג'י"):
-    """Selects the best target class entry based on coach preferences, series time match, and exclusion rules."""
+def select_target_entry(target_info_list, target_coach, target_time="", target_series_id=None, always_exclude="דניאל טנג'י"):
+    """Selects the best target class entry based on coach preferences, series ID, series time match, and exclusion rules."""
     if not target_info_list:
         return None
 
@@ -195,14 +195,18 @@ def select_target_entry(target_info_list, target_coach, target_time="", always_e
 
     def score_entry(entry):
         score = 0
-        # 1. Active booking option (real active classes have 'booking_option' set, e.g. 'book', 'past', 'registered')
+        # 1. Exact Series ID match (highest priority guarantee)
+        entry_series_id = (entry.get('series') or {}).get('id')
+        if target_series_id and entry_series_id and int(entry_series_id) == int(target_series_id):
+            score += 100
+        # 2. Active booking option (real active classes have 'booking_option' set, e.g. 'book', 'past', 'registered')
         if entry.get('booking_option'):
             score += 20
-        # 2. Time in series_name matches target_time (e.g. WOD ,Thursday,08:30 vs W.O.D,Thursday,09:00)
+        # 3. Time in series_name matches target_time (e.g. WOD ,Thursday,08:30 vs W.O.D,Thursday,09:00)
         ser_name = (entry.get('series') or {}).get('series_name', '')
         if target_time and target_time in ser_name:
             score += 10
-        # 3. Has free spots reported
+        # 4. Has free spots reported
         if entry.get('free') is not None and entry.get('free') > 0:
             score += 5
         return score
@@ -512,7 +516,8 @@ def main():
 
                 target_info_list = [entry for entry in target_info_list if matches_training_type(entry)]
             
-            target_entry = select_target_entry(target_info_list, target_coach, target_time=target_time)
+            target_series_id = day_config.get('series_id')
+            target_entry = select_target_entry(target_info_list, target_coach, target_time=target_time, target_series_id=target_series_id)
             
             if target_entry:
                 target_class_id = target_entry.get('id')
