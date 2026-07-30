@@ -77,3 +77,27 @@ def test_select_target_entry():
     res = select_target_entry(entries, "not דניאל טנג'י")
     assert res is not None
     assert res['id'] == 20
+
+def test_select_target_entry_ranks_active_and_time_matched_class():
+    entries = [
+        {
+            'id': 52500490,
+            'time': '08:30',
+            'coach': {'full_name': 'רוני שחם'},
+            'series': {'series_name': 'W.O.D,Thursday,09:00'},
+            'booking_option': None,
+            'free': 0
+        },
+        {
+            'id': 52504730,
+            'time': '08:30',
+            'coach': {'full_name': 'שיראל ריצמן'},
+            'series': {'series_name': 'WOD ,Thursday,08:30'},
+            'booking_option': 'book',
+            'free': 5
+        }
+    ]
+    res = select_target_entry(entries, "not דניאל טנג'י", target_time="08:30")
+    assert res is not None
+    assert res['id'] == 52504730
+    assert res['coach']['full_name'] == 'שיראל ריצמן'

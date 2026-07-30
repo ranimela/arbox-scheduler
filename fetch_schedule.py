@@ -180,8 +180,8 @@ def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_
         else:
             time.sleep(0.001)
 
-def select_target_entry(target_info_list, target_coach, always_exclude="דניאל טנג'י"):
-    """Selects the best target class entry based on coach preferences and exclusion rules."""
+def select_target_entry(target_info_list, target_coach, target_time="", always_exclude="דניאל טנג'י"):
+    """Selects the best target class entry based on coach preferences, series time match, and exclusion rules."""
     if not target_info_list:
         return None
 
@@ -193,18 +193,34 @@ def select_target_entry(target_info_list, target_coach, always_exclude="דניא
             return c_data.strip()
         return ''
 
+    def score_entry(entry):
+        score = 0
+        # 1. Active booking option (real active classes have 'booking_option' set, e.g. 'book', 'past', 'registered')
+        if entry.get('booking_option'):
+            score += 20
+        # 2. Time in series_name matches target_time (e.g. WOD ,Thursday,08:30 vs W.O.D,Thursday,09:00)
+        ser_name = (entry.get('series') or {}).get('series_name', '')
+        if target_time and target_time in ser_name:
+            score += 10
+        # 3. Has free spots reported
+        if entry.get('free') is not None and entry.get('free') > 0:
+            score += 5
+        return score
+
+    sorted_list = sorted(target_info_list, key=score_entry, reverse=True)
+
     if target_coach:
         if target_coach.lower().startswith('not '):
             exclude_coach = target_coach[4:].strip().lower()
-            for entry in target_info_list:
+            for entry in sorted_list:
                 if exclude_coach not in get_coach_name(entry).lower():
                     return entry
         else:
-            for entry in target_info_list:
+            for entry in sorted_list:
                 if target_coach.lower() in get_coach_name(entry).lower():
                     return entry
 
-    for entry in target_info_list:
+    for entry in sorted_list:
         if always_exclude.lower() not in get_coach_name(entry).lower():
             return entry
 
@@ -496,7 +512,7 @@ def main():
 
                 target_info_list = [entry for entry in target_info_list if matches_training_type(entry)]
             
-            target_entry = select_target_entry(target_info_list, target_coach)
+            target_entry = select_target_entry(target_info_list, target_coach, target_time=target_time)
             
             if target_entry:
                 target_class_id = target_entry.get('id')
