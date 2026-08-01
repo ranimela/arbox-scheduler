@@ -33,10 +33,10 @@ def test_generate_html_table():
 
 def test_target_config_fallback():
     assert TARGET_CONFIG is not None
-    assert TARGET_CONFIG['Sunday']['coach'] == 'not דניאל טנג\'י'
-    assert TARGET_CONFIG['Tuesday']['coach'] == 'not דניאל טנג\'י'
-    assert TARGET_CONFIG['Thursday']['coach'] == 'not דניאל טנג\'י'
-    assert TARGET_CONFIG['Friday']['coach'] == 'not דניאל טנג\'י'
+    assert TARGET_CONFIG['Sunday']['series_id'] == 187541
+    assert TARGET_CONFIG['Tuesday']['series_id'] == 3300
+    assert TARGET_CONFIG['Thursday']['series_id'] == 187542
+    assert TARGET_CONFIG['Friday']['series_id'] == 2498
 
 def test_category_matching_prioritizes_box_categories():
     target_type = "WOD"
@@ -78,26 +78,27 @@ def test_select_target_entry():
     assert res is not None
     assert res['id'] == 20
 
-def test_select_target_entry_ranks_active_and_time_matched_class():
+def test_select_target_entry_bypasses_coach_if_series_id_matches():
     entries = [
         {
             'id': 52500490,
             'time': '08:30',
-            'coach': {'full_name': 'רוני שחם'},
-            'series': {'id': 2489, 'series_name': 'W.O.D,Thursday,09:00'},
-            'booking_option': None,
-            'free': 0
+            'coach': {'full_name': 'דניאל טנג\'י'},
+            'series': {'id': 2498, 'series_name': 'W.O.D,Friday,08:30'},
+            'booking_option': 'book',
+            'free': 5
         },
         {
             'id': 52504730,
             'time': '08:30',
             'coach': {'full_name': 'שיראל ריצמן'},
-            'series': {'id': 187542, 'series_name': 'WOD ,Thursday,08:30'},
+            'series': {'id': 9999, 'series_name': 'WOD ,Friday,08:30'},
             'booking_option': 'book',
             'free': 5
         }
     ]
-    res = select_target_entry(entries, "not דניאל טנג'י", target_time="08:30", target_series_id=187542)
+    # Should select entry with series_id 2498 immediately, even if coach is דניאל טנג'י
+    res = select_target_entry(entries, target_time="08:30", target_series_id=2498)
     assert res is not None
-    assert res['id'] == 52504730
-    assert res['series']['id'] == 187542
+    assert res['id'] == 52500490
+    assert res['series']['id'] == 2498

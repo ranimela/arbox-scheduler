@@ -1,9 +1,9 @@
 {
   "TARGET_CONFIG": {
-    "Sunday":   {"time": "08:30", "coach": "not דניאל טנג'י", "type": "WOD", "series_id": 187541},
-    "Tuesday":  {"time": "18:30", "coach": "not דניאל טנג'י", "type": "WOD", "series_id": 3300},
-    "Thursday": {"time": "08:30", "coach": "not דניאל טנג'י", "type": "WOD", "series_id": 187542},
-    "Friday":   {"time": "08:30", "coach": "not דניאל טנג'י", "type": "WOD", "series_id": 2498}
+    "Sunday":   {"time": "08:30", "type": "WOD", "series_id": 187541},
+    "Tuesday":  {"time": "18:30", "type": "WOD", "series_id": 3300},
+    "Thursday": {"time": "08:30", "type": "WOD", "series_id": 187542},
+    "Friday":   {"time": "08:30", "type": "WOD", "series_id": 2498}
   },
   "DATE_OVERRIDES": {}
 }
