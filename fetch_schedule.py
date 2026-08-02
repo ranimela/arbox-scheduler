@@ -246,55 +246,63 @@ def book_class(session, schedule_id):
         logger.info(f"[DRY RUN] Would book class with Schedule ID: {schedule_id}")
         return True, "Dry run success"
 
-    # Rapid-fire retry loop for peak-load connection drops
+    last_error_msg = "Unknown error"
+
     for attempt in range(1, 6):
         try:
             resp = session.post(url, json=payload, timeout=10)
             
-            # Safely parse JSON without raising a fatal exception
             try:
                 resp_json = resp.json()
-            except ValueError:
+            except Exception:
                 resp_json = {}
             
             # Check for success or already registered
-            is_already_in = "alreadyRegistered" in str(resp_json) or "alreadyRegistered" in resp.text
+            is_already_in = "alreadyregistered" in str(resp_json).lower() or "alreadyregistered" in resp.text.lower()
             
             if resp.status_code == 200 or is_already_in:
                 status = "Confirmed" if resp.status_code == 200 else "Already Registered"
                 msg = f"Successfully secured spot! ({status}) - Attempt {attempt}"
                 logger.info(msg)
                 return True, msg
+            
+            # Extract detailed user-facing error message from Arbox JSON
+            err_obj = resp_json.get('error')
+            if isinstance(err_obj, dict):
+                arbox_err = err_obj.get('messageToUser') or err_obj.get('message') or ''
+            elif isinstance(err_obj, str):
+                arbox_err = err_obj
             else:
-                # Sanitize response dump
-                clean_resp_text = resp.text[:200] + "..." if len(resp.text) > 200 else resp.text
-                msg = f"Failed to book: {resp.status_code} {clean_resp_text}"
-                logger.error(msg)
-                # If it's a specific "full" error or client error (4xx except 429), stop retrying
-                if "full" in msg.lower() or "limit" in msg.lower() or (400 <= resp.status_code < 500 and resp.status_code != 429):
-                    return False, msg
-                
+                arbox_err = ''
+            
+            if not arbox_err:
+                arbox_err = resp_json.get('message') or resp.text[:200]
+            
+            last_error_msg = f"Failed to book (Status {resp.status_code}): {arbox_err}"
+            logger.error(f"Attempt {attempt} - {last_error_msg}")
+
+            # Transient errors to retry: rate limits (429), gateway/proxy drops (502, 503, 504)
+            retryable_codes = {429, 502, 503, 504}
+            if resp.status_code not in retryable_codes:
+                # Stop immediately on deterministic business logic/membership errors and return exact reason
+                return False, last_error_msg
+
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            logger.warning(f"Attempt {attempt} failed (Connection/Timeout Error): {e}")
+            last_error_msg = f"Connection/Timeout Error: {e}"
+            logger.warning(f"Attempt {attempt} failed: {last_error_msg}")
             if attempt == 5:
-                msg = f"Error during booking after 5 attempts: {e}"
-                logger.error(msg)
-                return False, msg
-            # Exponential backoff with random jitter
-            sleep_time = (0.1 * (2 ** (attempt - 1))) + random.uniform(0.01, 0.05)
-            logger.info(f"Retrying in {sleep_time:.3f} seconds...")
-            time.sleep(sleep_time)
+                return False, f"Error during booking after 5 attempts: {e}"
         except Exception as e:
-            logger.warning(f"Attempt {attempt} failed with unexpected error: {e}")
+            last_error_msg = f"Unexpected Error: {e}"
+            logger.warning(f"Attempt {attempt} failed: {last_error_msg}")
             if attempt == 5:
-                msg = f"Error during booking after 5 attempts: {e}"
-                logger.error(msg)
-                return False, msg
-            sleep_time = (0.1 * (2 ** (attempt - 1))) + random.uniform(0.01, 0.05)
-            logger.info(f"Retrying in {sleep_time:.3f} seconds...")
-            time.sleep(sleep_time)
+                return False, f"Error during booking after 5 attempts: {e}"
+            
+        sleep_time = (0.1 * (2 ** (attempt - 1))) + random.uniform(0.01, 0.05)
+        logger.info(f"Retrying in {sleep_time:.3f} seconds...")
+        time.sleep(sleep_time)
     
-    return False, "Max retries reached"
+    return False, last_error_msg
 
 def generate_html_table(classes_info, date_range_str, status_html=""):
     html_content = f"""<!DOCTYPE html>

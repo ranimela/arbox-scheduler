@@ -4,7 +4,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 from datetime import datetime, timezone
-from fetch_schedule import get_israel_time, generate_html_table, TARGET_CONFIG, select_target_entry
+from unittest.mock import MagicMock
+from fetch_schedule import get_israel_time, generate_html_table, TARGET_CONFIG, select_target_entry, book_class
 
 def test_get_israel_time():
     isr_now = get_israel_time()
@@ -97,8 +98,29 @@ def test_select_target_entry_bypasses_coach_if_series_id_matches():
             'free': 5
         }
     ]
-    # Should select entry with series_id 2498 immediately, even if coach is דניאל טנג'י
     res = select_target_entry(entries, target_time="08:30", target_series_id=2498)
     assert res is not None
     assert res['id'] == 52500490
     assert res['series']['id'] == 2498
+
+def test_book_class_extracts_arbox_message_to_user():
+    mock_session = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 513
+    mock_resp.text = '{"statusCode":513,"error":{"message":"Schedule Exception","messageToUser":"Class is full","code":513},"data":null}'
+    mock_resp.json.return_value = {
+        "statusCode": 513,
+        "error": {
+            "message": "Schedule Exception",
+            "messageToUser": "Class is full",
+            "code": 513
+        },
+        "data": None
+    }
+    mock_session.post.return_value = mock_resp
+
+    success, msg = book_class(mock_session, 52504730)
+    assert success is False
+    assert "Class is full" in msg
+    assert "Status 513" in msg
+    assert mock_session.post.call_count == 1
