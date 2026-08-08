@@ -67,7 +67,18 @@ def calculate_total(items: list[float]) -> float:
     * Complex Local: `useReducer`
     * Server: React Query / TanStack Query / SWR. Avoid global stores for server data.
 
-### 5. Accessibility (A11y)
-* **Semantic HTML:** Use `<button>` for actions, `<a>` for links.
-* **Forms:** All inputs must have associated labels (`htmlFor` / `id`).
-* **Visuals:** `alt` text for images. Color contrast must meet WCAG AA standards.
+
+
+---
+
+## 🏋️ Arbox Membership ID Renewal Workflow (SOP)
+Whenever an annual or monthly membership renews, `ARBOX_MEMBERSHIP_USER_ID` expires and returns HTTP status `518`.
+
+### Exact 30-Second Retrieval Procedure (DO NOT USE PROXIES OR ENUMERATION)
+1. Direct the user to open:
+   `https://site.arboxapp.com/schedule?identifier=f1UhUDad1588686203`
+2. Open **F12** (Developer Tools) -> **Network** tab -> filter by **`insert`**.
+3. Sign in, click **Book** on any session.
+4. Copy `"membership_user_id"` from the `insert` request payload.
+5. Update `ARBOX_MEMBERSHIP_USER_ID` in `.env` and GitHub Repository Secrets.
+
