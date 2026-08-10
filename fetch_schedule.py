@@ -31,6 +31,8 @@ EMAIL = os.getenv('ARBOX_EMAIL')
 PASSWORD = os.getenv('ARBOX_PASSWORD')
 USER_ID = os.getenv('ARBOX_USER_ID')
 MEMBERSHIP_USER_ID = os.getenv('ARBOX_MEMBERSHIP_USER_ID', '16582410')
+if not MEMBERSHIP_USER_ID or str(MEMBERSHIP_USER_ID).strip() in ('12165397', '1588686203'):
+    MEMBERSHIP_USER_ID = '16582410'
 
 # NTFY Settings
 # Using a specific variable name to avoid collision with other projects
