@@ -96,11 +96,11 @@ def get_israel_time():
 
 def send_ntfy(title, message, priority="default", tags=""):
     """Send push notification via ntfy.sh"""
-    # Allowed notification window: 8:00 PM (20:00) to 9:30 PM (21:30) Israel Time
+    # Allowed notification window: 8:00 PM (20:00) to 11:00 PM (23:00) Israel Time
     isr_now = get_israel_time()
     isr_minutes = isr_now.hour * 60 + isr_now.minute
-    if not (1200 <= isr_minutes <= 1290):
-        logger.info(f"Skipping ntfy notification (outside allowed window 20:00 - 21:30 Israel Time): {title}")
+    if not (1200 <= isr_minutes <= 1380):
+        logger.info(f"Skipping ntfy notification (outside allowed window 20:00 - 23:00 Israel Time): {title}")
         return False
 
     logger.info(f"Sending ntfy notification: {title}")
