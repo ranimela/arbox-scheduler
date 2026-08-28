@@ -6,6 +6,7 @@ import time
 import logging
 import random
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 # Configure logging
@@ -77,22 +78,13 @@ for stale_file in ['schedule.html', 'schedule_output.json']:
 # SET TO False TO ACTUALLY BOOK CLASSES
 DRY_RUN = os.getenv('DRY_RUN', 'False').lower() == 'true'
 
-def get_israel_time():
-    """Returns the current time in Israel (UTC+2 or UTC+3 depending on DST)"""
-    now_utc = datetime.now(timezone.utc)
-    month = now_utc.month
-    day = now_utc.day
-    # Israel DST: Friday before the last Sunday in March to the last Sunday in October
-    if 3 < month < 10:
-        is_dst = True
-    elif month == 3:
-        is_dst = (day >= 23)
-    elif month == 10:
-        is_dst = (day < 25)
-    else:
-        is_dst = False
-    offset = 3 if is_dst else 2
-    return now_utc + timedelta(hours=offset)
+def get_israel_time() -> datetime:
+    """Returns the current time in Israel using the Asia/Jerusalem timezone.
+
+    Returns:
+        datetime: Current timezone-aware datetime in Asia/Jerusalem.
+    """
+    return datetime.now(ZoneInfo("Asia/Jerusalem"))
 
 def send_ntfy(title, message, priority="default", tags=""):
     """Send push notification via ntfy.sh"""
@@ -420,6 +412,8 @@ def main():
         logger.error("Please ensure ARBOX_EMAIL and ARBOX_PASSWORD are set in the .env file.")
         sys.exit(1)
 
+    events = []
+
     base_headers = {
         'Content-Type': 'application/json',
         'identifier': IDENTIFIER,
@@ -535,7 +529,9 @@ def main():
                 coach_name = target_entry.get('coach', {}).get('name', 'Unknown')
                 
                 # Check registration status
-                is_already_booked = target_entry.get('is_user_signed_to_schedule', False)
+                is_already_booked = bool(target_entry.get('is_user_signed_to_schedule')) or (
+                    target_entry.get('booking_option') == 'cancelScheduleUser'
+                )
                 spots_max = target_entry.get('max_participants', 0)
                 spots_booked = target_entry.get('num_signed_to_schedule', 0)
                 spots_free = spots_max - spots_booked

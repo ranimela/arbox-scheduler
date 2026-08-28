@@ -5,7 +5,5 @@
     "Thursday": {"time": "08:30", "type": "WOD", "series_id": 187542},
     "Friday":   {"time": "08:30", "type": "WOD", "series_id": 2498}
   },
-  "DATE_OVERRIDES": {
-    "2026-08-21": {"time": "07:30", "type": "WOD", "series_id": 264059}
-  }
+  "DATE_OVERRIDES": {}
 }

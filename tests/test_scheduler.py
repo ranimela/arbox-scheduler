@@ -10,9 +10,10 @@ from fetch_schedule import get_israel_time, generate_html_table, TARGET_CONFIG, 
 def test_get_israel_time():
     isr_now = get_israel_time()
     assert isr_now is not None
-    now_utc = datetime.now(timezone.utc)
-    diff_hours = (isr_now - now_utc).total_seconds() / 3600
-    assert 1.9 <= diff_hours <= 3.1
+    assert isr_now.tzinfo is not None
+    assert str(isr_now.tzinfo) == "Asia/Jerusalem"
+    offset_hours = isr_now.utcoffset().total_seconds() / 3600
+    assert offset_hours in (2.0, 3.0)
 
 def test_generate_html_table():
     classes_info = [
@@ -124,3 +125,30 @@ def test_book_class_extracts_arbox_message_to_user():
     assert "Class is full" in msg
     assert "Status 513" in msg
     assert mock_session.post.call_count == 1
+
+def test_israel_time_dst_transitions():
+    from zoneinfo import ZoneInfo
+    summer_dt = datetime(2026, 7, 15, 12, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+    winter_dt = datetime(2026, 1, 15, 12, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+    assert summer_dt.utcoffset().total_seconds() / 3600 == 3.0
+    assert winter_dt.utcoffset().total_seconds() / 3600 == 2.0
+
+def test_already_booked_detection_scenarios():
+    def check_is_already_booked(entry: dict) -> bool:
+        return bool(entry.get("is_user_signed_to_schedule")) or (
+            entry.get("booking_option") == "cancelScheduleUser"
+        )
+
+    assert check_is_already_booked({"is_user_signed_to_schedule": True, "booking_option": None}) is True
+    assert check_is_already_booked({"is_user_signed_to_schedule": None, "booking_option": "cancelScheduleUser"}) is True
+    assert check_is_already_booked({"is_user_signed_to_schedule": False, "booking_option": "cancelScheduleUser"}) is True
+    assert check_is_already_booked({"is_user_signed_to_schedule": False, "booking_option": "book"}) is False
+    assert check_is_already_booked({"is_user_signed_to_schedule": None, "booking_option": "book"}) is False
+    assert check_is_already_booked({}) is False
+
+def test_config_date_overrides_empty():
+    import json
+    config_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+    with open(config_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    assert data.get("DATE_OVERRIDES") == {}
