@@ -86,8 +86,18 @@ def get_israel_time() -> datetime:
     """
     return datetime.now(ZoneInfo("Asia/Jerusalem"))
 
-def send_ntfy(title, message, priority="default", tags=""):
-    """Send push notification via ntfy.sh"""
+def send_ntfy(title: str, message: str, priority: str = "default", tags: str = "") -> bool:
+    """Send push notification via ntfy.sh
+
+    Args:
+        title: Notification title.
+        message: Notification body content.
+        priority: Priority level ('low', 'default', 'high', 'urgent').
+        tags: Comma-separated tag strings.
+
+    Returns:
+        bool: True if sent successfully, False otherwise.
+    """
     # Allowed notification window: 8:00 PM (20:00) to 11:00 PM (23:00) Israel Time
     isr_now = get_israel_time()
     isr_minutes = isr_now.hour * 60 + isr_now.minute
@@ -98,117 +108,168 @@ def send_ntfy(title, message, priority="default", tags=""):
     logger.info(f"Sending ntfy notification: {title}")
     try:
         headers = {
-            "Title": title.encode('utf-8'),
+            "Title": title.encode("utf-8"),
             "Priority": priority,
-            "Tags": tags
+            "Tags": tags,
         }
         requests.post(
             f"https://ntfy.sh/{NTFY_TOPIC}",
-            data=message.encode('utf-8'),
+            data=message.encode("utf-8"),
             headers=headers,
-            timeout=10
+            timeout=10,
         ).raise_for_status()
         return True
     except Exception as e:
         logger.error(f"Failed to send ntfy: {e}")
         return False
 
-def wait_for_precision_window(target_hour_utc=18, target_minute_utc=0, expected_wake_hour_utc=13, expected_wake_minute_utc=47, pre_notify_msg=None):
+def is_user_booked_for_schedule(entry: dict | None) -> bool:
+    """Checks if the user is already booked for the given schedule entry.
+
+    Args:
+        entry: Schedule entry dictionary.
+
+    Returns:
+        bool: True if user is booked/signed up, False otherwise.
     """
-    If the script starts early, it will wait until exactly the target time.
-    Sends a status update at 20:59 (1 minute before launch).
-    """
-    now_utc = datetime.now(timezone.utc)
-    target_time = now_utc.replace(hour=target_hour_utc, minute=target_minute_utc, second=0, microsecond=0)
+    if not isinstance(entry, dict):
+        return False
     
+    signed = entry.get("is_user_signed_to_schedule")
+    if bool(signed):
+        return True
+    
+    booking_option = str(entry.get("booking_option") or "").strip().lower()
+    return booking_option == "cancelscheduleuser"
+
+def wait_for_precision_window(
+    target_hour_israel: int = 21,
+    target_minute_israel: int = 0,
+    expected_wake_hour_utc: int = 13,
+    expected_wake_minute_utc: int = 47,
+    pre_notify_msg: str | None = None,
+) -> None:
+    """If the script starts early, waits until exactly the target time in Israel.
+
+    Sends a status update at 20:59 (1 minute before launch).
+
+    Args:
+        target_hour_israel: Target hour in Israel timezone (default: 21).
+        target_minute_israel: Target minute in Israel timezone (default: 0).
+        expected_wake_hour_utc: Expected runner wake hour in UTC (default: 13).
+        expected_wake_minute_utc: Expected runner wake minute in UTC (default: 47).
+        pre_notify_msg: Message preview for 1-minute pre-notification.
+    """
+    now_isr = get_israel_time()
+    target_time_isr = now_isr.replace(hour=target_hour_israel, minute=target_minute_israel, second=0, microsecond=0)
+
     # Calculate the expected wake-up time to report delays
+    now_utc = datetime.now(timezone.utc)
     expected_wake = now_utc.replace(hour=expected_wake_hour_utc, minute=expected_wake_minute_utc, second=0, microsecond=0)
     if now_utc < expected_wake:
         expected_wake -= timedelta(days=1)
     delay_delta = now_utc - expected_wake
     delay_mins = int(delay_delta.total_seconds() / 60)
-    
-    # Only wait if we are within the window
-    if (target_time - now_utc).total_seconds() > 18000 or (target_time - now_utc).total_seconds() < 0:
-        logger.info(f"Skipping wait: Not in the precision window. Current UTC: {now_utc.strftime('%H:%M:%S')}")
+
+    # Only wait if we are within the 5-hour window
+    diff_sec = (target_time_isr - now_isr).total_seconds()
+    if diff_sec > 18000 or diff_sec < 0:
+        logger.info(f"Skipping wait: Not in the precision window. Current Israel Time: {now_isr.strftime('%H:%M:%S')}")
         return
 
+    target_time_utc = target_time_isr.astimezone(timezone.utc)
     logger.info("--- PRECISION COUNTDOWN ENGAGED ---")
-    logger.info(f"Target Time: {target_time.strftime('%H:%M:%S')} UTC (21:00:00 Israel)")
-    
+    logger.info(f"Target Time: {target_time_isr.strftime('%H:%M:%S')} Israel Time ({target_time_utc.strftime('%H:%M:%S')} UTC)")
+
     # Initial "I am here" notification
     send_ntfy(
         title="Arbox Agent Active",
-        message=f"Standing by for 21:00:00 registration.\nExpected wake-up: {expected_wake.strftime('%H:%M')} UTC\nGitHub Delay: {delay_mins}m"
+        message=f"Standing by for 21:00:00 registration.\nExpected wake-up: {expected_wake.strftime('%H:%M')} UTC\nGitHub Delay: {delay_mins}m",
     )
-    
+
     has_sent_pre_notification = False
-    
+
     while True:
-        now = datetime.now(timezone.utc)
-        remaining = (target_time - now).total_seconds()
-        
+        now = get_israel_time()
+        remaining = (target_time_isr - now).total_seconds()
+
         # 20:59 Notification (60 seconds before target)
         if 59 <= remaining <= 61 and not has_sent_pre_notification:
             logger.info("[20:59] Sending T-minus 1 minute status update...")
             send_ntfy(
                 title="T-minus 1 Minute",
                 message=f"Targeting: {pre_notify_msg or 'No specific target found.'}",
-                priority="high"
+                priority="high",
             )
             has_sent_pre_notification = True
 
         if remaining <= 0:
             logger.info(f"BEEP BEEP BEEP! 21:00:00 REACHED! GO GO GO! (Actual: {now.strftime('%H:%M:%S.%f')})")
             break
-            
+
         if remaining > 1:
-            # We print a periodic progress update for terminal logs
-            print(f"T-minus {int(remaining)} seconds...", end='\r')
+            # Periodic progress update for terminal logs
+            print(f"T-minus {int(remaining)} seconds...", end="\r")
             time.sleep(0.5)
         elif sys.platform == "win32" and remaining < 0.1:
             # Under Windows, when very close to trigger (< 100ms), use busy-wait for sub-millisecond accuracy
-            # due to standard Windows scheduler timer resolution limitations (15.6ms)
-            while (target_time - datetime.now(timezone.utc)).total_seconds() > 0:
+            while (target_time_isr - get_israel_time()).total_seconds() > 0:
                 pass
         else:
             time.sleep(0.001)
 
-def select_target_entry(target_info_list, target_coach="", target_time="", target_series_id=None, always_exclude=""):
-    """Selects the target class entry. Prioritizes target_series_id above all else."""
+def select_target_entry(
+    target_info_list: list[dict],
+    target_coach: str = "",
+    target_time: str = "",
+    target_series_id: int | str | None = None,
+    always_exclude: str = "",
+) -> dict | None:
+    """Selects the target class entry. Prioritizes target_series_id above all else.
+
+    Args:
+        target_info_list: List of schedule entry dictionaries.
+        target_coach: Target coach name or 'not <Coach>' filter.
+        target_time: Preferred class start time string (e.g. '08:30').
+        target_series_id: Specific series ID to prioritize.
+        always_exclude: Coach name substring to always exclude.
+
+    Returns:
+        dict | None: The matching schedule entry dict, or None if no match.
+    """
     if not target_info_list:
         return None
 
     # 1. Highest Priority: Match target_series_id directly regardless of coach name
-    if target_series_id:
+    if target_series_id is not None:
         for entry in target_info_list:
-            entry_series_id = (entry.get('series') or {}).get('id')
-            if entry_series_id and int(entry_series_id) == int(target_series_id):
+            entry_series_id = (entry.get("series") or {}).get("id")
+            if entry_series_id is not None and str(entry_series_id) == str(target_series_id):
                 return entry
 
-    def get_coach_name(entry_obj):
-        c_data = entry_obj.get('coach') or {}
+    def get_coach_name(entry_obj: dict) -> str:
+        c_data = entry_obj.get("coach") or {}
         if isinstance(c_data, dict):
-            return (c_data.get('full_name') or c_data.get('name') or f"{c_data.get('first_name', '')} {c_data.get('last_name', '')}").strip()
-        elif isinstance(c_data, str):
+            return (c_data.get("full_name") or c_data.get("name") or f"{c_data.get('first_name', '')} {c_data.get('last_name', '')}").strip()
+        if isinstance(c_data, str):
             return c_data.strip()
-        return ''
+        return ""
 
-    def score_entry(entry):
+    def score_entry(entry: dict) -> int:
         score = 0
-        if entry.get('booking_option'):
+        if entry.get("booking_option"):
             score += 20
-        ser_name = (entry.get('series') or {}).get('series_name', '')
+        ser_name = (entry.get("series") or {}).get("series_name", "")
         if target_time and target_time in ser_name:
             score += 10
-        if entry.get('free') is not None and entry.get('free') > 0:
+        if entry.get("free") is not None and entry.get("free") > 0:
             score += 5
         return score
 
     sorted_list = sorted(target_info_list, key=score_entry, reverse=True)
 
     if target_coach:
-        if target_coach.lower().startswith('not '):
+        if target_coach.lower().startswith("not "):
             exclude_coach = target_coach[4:].strip().lower()
             for entry in sorted_list:
                 if exclude_coach not in get_coach_name(entry).lower():
@@ -225,17 +286,23 @@ def select_target_entry(target_info_list, target_coach="", target_time="", targe
 
     return sorted_list[0] if sorted_list else None
 
-def book_class(session, schedule_id):
+def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool, str]:
+    """Attempts to book a class using the V2 Arbox API.
+
+    Args:
+        session: Active requests Session with auth headers.
+        schedule_id: Integer or string schedule ID to book.
+
+    Returns:
+        tuple[bool, str]: Tuple of (success_status, status_message).
     """
-    Attempts to book a class using the V2 Arbox API.
-    """
-    url = f'https://apiappv2.arboxapp.com/api/v2/scheduleUser/insert?XDEBUG_SESSION_START=PHPSTORM'
+    url = "https://apiappv2.arboxapp.com/api/v2/scheduleUser/insert?XDEBUG_SESSION_START=PHPSTORM"
     payload = {
         "extras": None,
         "membership_user_id": int(MEMBERSHIP_USER_ID),
-        "schedule_id": int(schedule_id)
+        "schedule_id": int(schedule_id),
     }
-    
+
     if DRY_RUN:
         logger.info(f"[DRY RUN] Would book class with Schedule ID: {schedule_id}")
         return True, "Dry run success"
@@ -245,33 +312,33 @@ def book_class(session, schedule_id):
     for attempt in range(1, 6):
         try:
             resp = session.post(url, json=payload, timeout=10)
-            
+
             try:
                 resp_json = resp.json()
             except Exception:
                 resp_json = {}
-            
+
             # Check for success or already registered
             is_already_in = "alreadyregistered" in str(resp_json).lower() or "alreadyregistered" in resp.text.lower()
-            
+
             if resp.status_code == 200 or is_already_in:
                 status = "Confirmed" if resp.status_code == 200 else "Already Registered"
                 msg = f"Successfully secured spot! ({status}) - Attempt {attempt}"
                 logger.info(msg)
                 return True, msg
-            
+
             # Extract detailed user-facing error message from Arbox JSON
-            err_obj = resp_json.get('error')
+            err_obj = resp_json.get("error")
             if isinstance(err_obj, dict):
-                arbox_err = err_obj.get('messageToUser') or err_obj.get('message') or ''
+                arbox_err = err_obj.get("messageToUser") or err_obj.get("message") or ""
             elif isinstance(err_obj, str):
                 arbox_err = err_obj
             else:
-                arbox_err = ''
-            
+                arbox_err = ""
+
             if not arbox_err:
-                arbox_err = resp_json.get('message') or resp.text[:200]
-            
+                arbox_err = resp_json.get("message") or resp.text[:200]
+
             last_error_msg = f"Failed to book (Status {resp.status_code}): {arbox_err}"
             logger.error(f"Attempt {attempt} - {last_error_msg}")
 
@@ -291,14 +358,24 @@ def book_class(session, schedule_id):
             logger.warning(f"Attempt {attempt} failed: {last_error_msg}")
             if attempt == 5:
                 return False, f"Error during booking after 5 attempts: {e}"
-            
+
         sleep_time = (0.1 * (2 ** (attempt - 1))) + random.uniform(0.01, 0.05)
         logger.info(f"Retrying in {sleep_time:.3f} seconds...")
         time.sleep(sleep_time)
-    
+
     return False, last_error_msg
 
-def generate_html_table(classes_info, date_range_str, status_html=""):
+def generate_html_table(classes_info: list[dict], date_range_str: str, status_html: str = "") -> str:
+    """Generates an HTML table summary of the schedule and booking status.
+
+    Args:
+        classes_info: List of class summary dictionaries.
+        date_range_str: Formatted date string for header.
+        status_html: Optional HTML snippet for the status banner.
+
+    Returns:
+        str: Generated HTML content.
+    """
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -381,14 +458,14 @@ def generate_html_table(classes_info, date_range_str, status_html=""):
             <tbody>
 """
     for cls in classes_info:
-        is_target = cls['best_match']
+        is_target = cls["best_match"]
         row_class = "target" if is_target else ""
-        
+
         if is_target:
-            status_badge = '<span class="badge booked">SECURED</span>' if cls.get('was_booked') else '<span class="badge missed" style="background:#ef4444">MISSED</span>'
+            status_badge = '<span class="badge booked">SECURED</span>' if cls.get("was_booked") else '<span class="badge missed" style="background:#ef4444">MISSED</span>'
         else:
             status_badge = '<span style="color:#cbd5e1">-</span>'
-            
+
         html_content += f"""
                 <tr class="{row_class}">
                     <td><strong>{cls['hour']}</strong></td>
@@ -403,42 +480,43 @@ def generate_html_table(classes_info, date_range_str, status_html=""):
 </body>
 </html>
 """
-    with open('schedule.html', 'w', encoding='utf-8') as f:
+    with open("schedule.html", "w", encoding="utf-8") as f:
         f.write(html_content)
     return html_content
 
-def main():
+def main() -> None:
+    """Main entrypoint for schedule scanning and precision automated booking."""
     if not EMAIL or not PASSWORD:
         logger.error("Please ensure ARBOX_EMAIL and ARBOX_PASSWORD are set in the .env file.")
         sys.exit(1)
 
-    events = []
+    events: list[dict] = []
 
     base_headers = {
-        'Content-Type': 'application/json',
-        'identifier': IDENTIFIER,
-        'boxfk': GYM_ID,
-        'whitelabel': 'Arbox',
-        'newsite': '1',
-        'referername': 'site',
-        'version': '10',
-        'lang': 'en',
-        'User-Agent': 'Mozilla/5.0'
+        "Content-Type": "application/json",
+        "identifier": IDENTIFIER,
+        "boxfk": GYM_ID,
+        "whitelabel": "Arbox",
+        "newsite": "1",
+        "referername": "site",
+        "version": "10",
+        "lang": "en",
+        "User-Agent": "Mozilla/5.0",
     }
 
     session = requests.Session()
     session.headers.update(base_headers)
-    
+
     # 1. Load cached token or login if missing/invalid
-    login_url = 'https://apiappv2.arboxapp.com/api/v2/user/siteLogin'
-    session_cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'session.json')
+    login_url = "https://apiappv2.arboxapp.com/api/v2/user/siteLogin"
+    session_cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session.json")
     token = None
 
     if os.path.exists(session_cache_path):
         try:
-            with open(session_cache_path, 'r', encoding='utf-8') as f:
+            with open(session_cache_path, "r", encoding="utf-8") as f:
                 cache_data = json.load(f)
-                token = cache_data.get('token')
+                token = cache_data.get("token")
                 if token:
                     logger.info("Found cached session token.")
         except Exception as e:
@@ -448,21 +526,22 @@ def main():
     masked_email = f"{parts[0][0]}***{parts[0][-1]}@{parts[1]}" if len(parts[0]) > 1 else EMAIL
 
     if token:
-        session.headers.update({'accesstoken': token})
+        session.headers.update({"accesstoken": token})
     else:
         logger.info("No cached session token found. Initiating fresh login...")
         try:
             resp = session.post(login_url, json={"email": EMAIL, "password": PASSWORD, "phone": ""}, timeout=10)
             resp.raise_for_status()
-            data = resp.json().get("data", resp.json())
-            token = data.get("token") or resp.headers.get("token")
+            resp_body = resp.json()
+            data = resp_body.get("data") if isinstance(resp_body.get("data"), dict) else resp_body
+            token = (data.get("token") if isinstance(data, dict) else None) or resp.headers.get("token")
             if not token:
                 logger.error("Login failed, no token returned.")
                 sys.exit(1)
-            session.headers.update({'accesstoken': token})
+            session.headers.update({"accesstoken": token})
             # Save token to cache
-            with open(session_cache_path, 'w', encoding='utf-8') as f:
-                json.dump({'token': token, 'created_at': datetime.now(timezone.utc).isoformat()}, f)
+            with open(session_cache_path, "w", encoding="utf-8") as f:
+                json.dump({"token": token, "created_at": datetime.now(timezone.utc).isoformat()}, f)
             logger.info(f"Logged in fresh as {masked_email} and cached token.")
         except Exception as e:
             logger.exception(f"Login error: {e}")
@@ -473,18 +552,18 @@ def main():
     tomorrow_obj = today + timedelta(days=1)
     tomorrow = tomorrow_obj.strftime("%Y-%m-%d")
     tomorrow_day = tomorrow_obj.strftime("%A")
-    
+
     day_config = DATE_OVERRIDES.get(tomorrow, TARGET_CONFIG.get(tomorrow_day))
-    
+
     target_class_id = None
     target_summary = "Searching..."
     target_summary_with_spots = "Searching..."
     is_already_booked = False
-    
+
     logger.info(f"Pre-scanning schedule for {tomorrow}...")
-    schedule_url = 'https://apiappv2.arboxapp.com/api/v2/site/schedule/betweenDates'
+    schedule_url = "https://apiappv2.arboxapp.com/api/v2/site/schedule/betweenDates"
     payload = {"from": tomorrow, "to": tomorrow, "locations_box_id": int(LOCATION_ID)}
-    
+
     try:
         resp = session.post(schedule_url, json=payload, timeout=10)
         # Intercept 401/403 errors for token refresh logic
@@ -492,54 +571,59 @@ def main():
             logger.info("Cached token expired/invalid. Re-authenticating...")
             resp_login = session.post(login_url, json={"email": EMAIL, "password": PASSWORD, "phone": ""}, timeout=10)
             resp_login.raise_for_status()
-            data = resp_login.json().get("data", resp_login.json())
-            token = data.get("token") or resp_login.headers.get("token")
+            resp_body = resp_login.json()
+            data = resp_body.get("data") if isinstance(resp_body.get("data"), dict) else resp_body
+            token = (data.get("token") if isinstance(data, dict) else None) or resp_login.headers.get("token")
             if token:
-                session.headers.update({'accesstoken': token})
-                with open(session_cache_path, 'w', encoding='utf-8') as f:
-                    json.dump({'token': token, 'created_at': datetime.now(timezone.utc).isoformat()}, f)
+                session.headers.update({"accesstoken": token})
+                with open(session_cache_path, "w", encoding="utf-8") as f:
+                    json.dump({"token": token, "created_at": datetime.now(timezone.utc).isoformat()}, f)
                 logger.info("Fresh token cached successfully. Retrying pre-scan...")
                 resp = session.post(schedule_url, json=payload, timeout=10)
         resp.raise_for_status()
-        events = resp.json().get("data", [])
-        
+        resp_data = resp.json()
+        if isinstance(resp_data, dict):
+            events = resp_data.get("data") or []
+        elif isinstance(resp_data, list):
+            events = resp_data
+        else:
+            events = []
+
         if day_config:
-            target_time = day_config['time']
-            target_coach = day_config.get('coach', '')
-            target_type = day_config.get('type')
-            
-            target_info_list = [entry for entry in events if entry.get('time') == target_time]
-            
+            target_time = day_config["time"]
+            target_coach = day_config.get("coach", "")
+            target_type = day_config.get("type")
+
+            target_info_list = [entry for entry in events if entry.get("time") == target_time]
+
             # Match by training type if specified (e.g., "WOD")
             if target_type:
-                def matches_training_type(entry_item):
-                    cat_name = ((entry_item.get('box_categories') or {}).get('name') or '').strip().lower()
+                def matches_training_type(entry_item: dict) -> bool:
+                    cat_name = ((entry_item.get("box_categories") or {}).get("name") or "").strip().lower()
                     if cat_name:
                         return target_type.lower() in cat_name
-                    ser_name = ((entry_item.get('series') or {}).get('series_name') or '').strip().lower()
+                    ser_name = ((entry_item.get("series") or {}).get("series_name") or "").strip().lower()
                     return target_type.lower() in ser_name
 
                 target_info_list = [entry for entry in target_info_list if matches_training_type(entry)]
-            
-            target_series_id = day_config.get('series_id')
+
+            target_series_id = day_config.get("series_id")
             target_entry = select_target_entry(target_info_list, target_coach, target_time=target_time, target_series_id=target_series_id)
-            
+
             if target_entry:
-                target_class_id = target_entry.get('id')
-                coach_name = target_entry.get('coach', {}).get('name', 'Unknown')
-                
+                target_class_id = target_entry.get("id")
+                coach_name = target_entry.get("coach", {}).get("name", "Unknown")
+
                 # Check registration status
-                is_already_booked = bool(target_entry.get('is_user_signed_to_schedule')) or (
-                    target_entry.get('booking_option') == 'cancelScheduleUser'
-                )
-                spots_max = target_entry.get('max_participants', 0)
-                spots_booked = target_entry.get('num_signed_to_schedule', 0)
+                is_already_booked = is_user_booked_for_schedule(target_entry)
+                spots_max = target_entry.get("max_participants", 0)
+                spots_booked = target_entry.get("num_signed_to_schedule", 0)
                 spots_free = spots_max - spots_booked
-                
+
                 target_summary = f"{tomorrow_day} {tomorrow} at {target_time} (Coach: {coach_name})"
                 target_summary_with_spots = f"{target_summary}\nSpots: {spots_free}/{spots_max}"
                 logger.info(f"TARGET ACQUIRED: {target_summary_with_spots}")
-                
+
                 if is_already_booked:
                     logger.info("Target class is ALREADY BOOKED for this user.")
             else:
@@ -566,10 +650,11 @@ def main():
         try:
             resp = session.post(login_url, json={"email": EMAIL, "password": PASSWORD, "phone": ""}, timeout=10)
             resp.raise_for_status()
-            data = resp.json().get("data", resp.json())
-            token = data.get("token") or resp.headers.get("token")
+            resp_body = resp.json()
+            data = resp_body.get("data") if isinstance(resp_body.get("data"), dict) else resp_body
+            token = (data.get("token") if isinstance(data, dict) else None) or resp.headers.get("token")
             if token:
-                session.headers.update({'accesstoken': token})
+                session.headers.update({"accesstoken": token})
                 logger.info("Token refreshed successfully.")
             else:
                 logger.warning("Token refresh failed. Proceeding with existing session.")
@@ -579,7 +664,7 @@ def main():
     # 4. EXECUTION (Fire immediately at 21:00:00)
     classes_info = []
     booking_summaries = []
-    
+
     if target_class_id:
         if is_already_booked:
             success = True
@@ -589,40 +674,46 @@ def main():
         # Clean the log message of any success/fail emojis
         clean_log_msg = log_msg.replace("✅", "").replace("❌", "").strip()
         booking_summaries.append(f"{target_summary}: {clean_log_msg}")
-        
+
         # We still fetch the full list for the final report table
         try:
             resp = session.post(schedule_url, json=payload, timeout=10)
             resp.raise_for_status()
-            events = resp.json().get("data", [])
+            resp_data = resp.json()
+            if isinstance(resp_data, dict):
+                events = resp_data.get("data") or []
+            elif isinstance(resp_data, list):
+                events = resp_data
+            else:
+                events = []
         except Exception as e:
             logger.warning(f"Could not fetch updated schedule for HTML report ({e}). Using pre-scan events.")
-        
+
         for entry in events:
-            schedule_id = entry.get('id')
+            schedule_id = entry.get("id")
             is_best_match = (schedule_id == target_class_id)
-            
+
             # Extract basic info for table
-            hour = entry.get('time', '')
-            box_cats = entry.get('box_categories') or {}
-            training = box_cats.get('name') or entry.get('series', {}).get('series_name') or 'WOD'
-            
+            hour = entry.get("time", "")
+            box_cats = entry.get("box_categories") or {}
+            training = box_cats.get("name") or entry.get("series", {}).get("series_name") or "WOD"
+
             classes_info.append({
-                'day': tomorrow_day,
-                'date': tomorrow,
-                'hour': hour,
-                'training': training,
-                'was_booked': True if (is_best_match and success) else False,
-                'best_match': is_best_match
+                "day": tomorrow_day,
+                "date": tomorrow,
+                "hour": hour,
+                "training": training,
+                "was_booked": True if (is_best_match and success) else False,
+                "best_match": is_best_match,
             })
     else:
         logger.warning("No target ID found. Skipping booking attempt.")
 
     # 5. Final Processing & Notification Report
     if classes_info:
-        classes_info.sort(key=lambda x: (x['date'], x['hour']))
-        any_booked = any(cls['was_booked'] for cls in classes_info if cls['best_match'])
-        
+        classes_info.sort(key=lambda x: (x["date"], x["hour"]))
+        any_booked = any(cls["was_booked"] for cls in classes_info if cls["best_match"])
+
         if any_booked:
             status_html = '<div class="status-header status-success">MISSION SUCCESS: Booking Secured</div>'
             ntfy_title = "✅ Booking Confirmed"
@@ -631,9 +722,9 @@ def main():
             ntfy_title = "❌ Booking Failed"
 
         generate_html_table(classes_info, tomorrow, status_html)
-        
+
         ntfy_msg = "\n".join(booking_summaries)
         send_ntfy(ntfy_title, ntfy_msg, priority="high")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
