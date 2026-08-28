@@ -149,7 +149,10 @@ def is_user_booked_for_schedule(entry: dict | None) -> bool:
         return False
 
     signed = entry.get("is_user_signed_to_schedule")
-    if bool(signed):
+    if isinstance(signed, str):
+        if signed.strip().lower() in ("true", "1"):
+            return True
+    elif bool(signed):
         return True
 
     booking_option = str(entry.get("booking_option") or "").strip().lower()
@@ -169,11 +172,12 @@ def extract_coach_name(entry: dict | None) -> str:
         return ""
     coach_data = entry.get("coach")
     if isinstance(coach_data, dict):
-        return (
-            coach_data.get("full_name")
-            or coach_data.get("name")
-            or f"{coach_data.get('first_name', '')} {coach_data.get('last_name', '')}"
-        ).strip()
+        full_name = coach_data.get("full_name") or coach_data.get("name")
+        if full_name and isinstance(full_name, str):
+            return full_name.strip()
+        first_name = coach_data.get("first_name") or ""
+        last_name = coach_data.get("last_name") or ""
+        return f"{first_name} {last_name}".strip()
     if isinstance(coach_data, str):
         return coach_data.strip()
     return ""
@@ -193,9 +197,13 @@ def extract_training_type(entry: dict | None) -> str:
     box_cats = entry.get("box_categories")
     if isinstance(box_cats, dict) and box_cats.get("name"):
         return str(box_cats["name"]).strip()
+    if isinstance(box_cats, str) and box_cats.strip():
+        return box_cats.strip()
     series_data = entry.get("series")
     if isinstance(series_data, dict) and series_data.get("series_name"):
         return str(series_data["series_name"]).strip()
+    if isinstance(series_data, str) and series_data.strip():
+        return series_data.strip()
     return "WOD"
 
 
@@ -339,7 +347,11 @@ def select_target_entry(
     if target_series_id is not None:
         for entry in valid_entries:
             series_obj = entry.get("series")
-            entry_series_id = series_obj.get("id") if isinstance(series_obj, dict) else None
+            entry_series_id = (
+                series_obj.get("id")
+                if isinstance(series_obj, dict)
+                else (entry.get("series_id") or entry.get("series_fk"))
+            )
             if entry_series_id is not None and str(entry_series_id) == str(target_series_id):
                 return entry
 
@@ -360,18 +372,23 @@ def select_target_entry(
     if target_coach:
         if target_coach.lower().startswith("not "):
             exclude_coach = target_coach[4:].strip().lower()
-            for entry in sorted_list:
-                if exclude_coach not in extract_coach_name(entry).lower():
-                    return entry
+            if exclude_coach:
+                for entry in sorted_list:
+                    if exclude_coach not in extract_coach_name(entry).lower():
+                        return entry
         else:
-            for entry in sorted_list:
-                if target_coach.lower() in extract_coach_name(entry).lower():
-                    return entry
+            coach_query = target_coach.strip().lower()
+            if coach_query:
+                for entry in sorted_list:
+                    if coach_query in extract_coach_name(entry).lower():
+                        return entry
 
     if always_exclude:
-        for entry in sorted_list:
-            if always_exclude.lower() not in extract_coach_name(entry).lower():
-                return entry
+        exclude_val = always_exclude.strip().lower()
+        if exclude_val:
+            for entry in sorted_list:
+                if exclude_val not in extract_coach_name(entry).lower():
+                    return entry
 
     return sorted_list[0] if sorted_list else None
 

@@ -103,6 +103,9 @@ def test_extract_coach_name_variations() -> None:
     assert extract_coach_name({"coach": {"full_name": "  Dan Cohen  "}}) == "Dan Cohen"
     assert extract_coach_name({"coach": {"name": "Sara Levi"}}) == "Sara Levi"
     assert extract_coach_name({"coach": {"first_name": "Alex", "last_name": "Gold"}}) == "Alex Gold"
+    assert extract_coach_name({"coach": {"first_name": "Dan", "last_name": None}}) == "Dan"
+    assert extract_coach_name({"coach": {"first_name": None, "last_name": "Cohen"}}) == "Cohen"
+    assert extract_coach_name({"coach": {"first_name": None, "last_name": None}}) == ""
     assert extract_coach_name({"coach": " Direct String Name "}) == "Direct String Name"
     assert extract_coach_name({"coach": None}) == ""
     assert extract_coach_name({}) == ""
@@ -113,7 +116,9 @@ def test_extract_coach_name_variations() -> None:
 def test_extract_training_type_variations() -> None:
     """Tests extract_training_type across box_categories and series fallbacks."""
     assert extract_training_type({"box_categories": {"name": "Hyrox"}}) == "Hyrox"
+    assert extract_training_type({"box_categories": "Hyrox String"}) == "Hyrox String"
     assert extract_training_type({"series": {"series_name": "Open Gym"}}) == "Open Gym"
+    assert extract_training_type({"series": "Open Gym String"}) == "Open Gym String"
     assert extract_training_type({"box_categories": None, "series": None}) == "WOD"
     assert extract_training_type({}) == "WOD"
     assert extract_training_type(None) == "WOD"
@@ -163,6 +168,15 @@ def test_select_target_entry_bypasses_coach_if_series_id_matches() -> None:
     assert res is not None
     assert res["id"] == 52500490
     assert (res.get("series") or {}).get("id") == 2498
+
+    # Fallback to top-level series_id
+    entries_flat = [
+        {"id": 1, "time": "08:30", "series_id": 3300},
+        {"id": 2, "time": "08:30", "series_id": 4400},
+    ]
+    res_flat = select_target_entry(entries_flat, target_series_id=3300)
+    assert res_flat is not None
+    assert res_flat["id"] == 1
 
 
 def test_select_target_entry_empty_or_malformed() -> None:
@@ -233,6 +247,10 @@ def test_already_booked_detection_scenarios() -> None:
     """Tests is_user_booked_for_schedule against various sign-up and booking flags."""
     assert is_user_booked_for_schedule({"is_user_signed_to_schedule": True, "booking_option": None}) is True
     assert is_user_booked_for_schedule({"is_user_signed_to_schedule": 1, "booking_option": None}) is True
+    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": "true", "booking_option": None}) is True
+    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": "1", "booking_option": None}) is True
+    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": "false", "booking_option": "book"}) is False
+    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": "0", "booking_option": "book"}) is False
     assert is_user_booked_for_schedule({"is_user_signed_to_schedule": None, "booking_option": "cancelScheduleUser"}) is True
     assert is_user_booked_for_schedule({"is_user_signed_to_schedule": False, "booking_option": "cancelScheduleUser"}) is True
     assert is_user_booked_for_schedule({"is_user_signed_to_schedule": False, "booking_option": "CancelScheduleUser"}) is True
