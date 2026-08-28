@@ -1,19 +1,26 @@
-import os
+"""Automated Arbox scheduler and precision booking agent.
+
+This module monitors, pre-scans, and automates high-precision class registrations
+on the Arbox platform according to configured per-day schedules and date overrides.
+"""
+
 import json
-import requests
+import logging
+import os
+from pathlib import Path
+import random
 import sys
 import time
-import logging
-import random
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
+import requests
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='[%(levelname)s] %(asctime)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format="[%(levelname)s] %(asctime)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("arbox_scheduler")
 
@@ -23,42 +30,45 @@ load_dotenv()
 # Force UTF-8 for Windows terminal support
 if sys.platform == "win32" and "pytest" not in sys.modules:
     import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
-GYM_ID = os.getenv('ARBOX_BOX_ID', '80')
-LOCATION_ID = os.getenv('ARBOX_LOCATION_ID', '70')
-EMAIL = os.getenv('ARBOX_EMAIL')
-PASSWORD = os.getenv('ARBOX_PASSWORD')
-USER_ID = os.getenv('ARBOX_USER_ID')
-MEMBERSHIP_USER_ID = os.getenv('ARBOX_MEMBERSHIP_USER_ID', '16582410')
-if not MEMBERSHIP_USER_ID or str(MEMBERSHIP_USER_ID).strip() in ('12165397', '1588686203'):
-    MEMBERSHIP_USER_ID = '16582410'
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    if hasattr(sys.stderr, "buffer"):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+
+GYM_ID = os.getenv("ARBOX_BOX_ID", "80")
+LOCATION_ID = os.getenv("ARBOX_LOCATION_ID", "70")
+EMAIL = os.getenv("ARBOX_EMAIL")
+PASSWORD = os.getenv("ARBOX_PASSWORD")
+USER_ID = os.getenv("ARBOX_USER_ID")
+MEMBERSHIP_USER_ID = os.getenv("ARBOX_MEMBERSHIP_USER_ID", "16582410")
+if not MEMBERSHIP_USER_ID or str(MEMBERSHIP_USER_ID).strip() in ("12165397", "1588686203"):
+    MEMBERSHIP_USER_ID = "16582410"
 
 # NTFY Settings
-# Using a specific variable name to avoid collision with other projects
-# Falls back to default if the env var is missing or empty
-NTFY_TOPIC = os.getenv('ARBOX_NTFY_TOPIC') or 'arbox-scheduler-ranimela'
+NTFY_TOPIC = os.getenv("ARBOX_NTFY_TOPIC") or "arbox-scheduler-ranimela"
 
 IDENTIFIER = "f1UhUDad1588686203"
 
 # Default TARGET CONFIGURATION (Custom Per-Day Schedule)
-TARGET_CONFIG = {
-    'Sunday':   {'time': '08:30', 'type': 'WOD', 'series_id': 187541},
-    'Tuesday':  {'time': '18:30', 'type': 'WOD', 'series_id': 3300}, 
-    'Thursday': {'time': '08:30', 'type': 'WOD', 'series_id': 187542},
-    'Friday':   {'time': '08:30', 'type': 'WOD', 'series_id': 2498}
+TARGET_CONFIG: dict[str, dict] = {
+    "Sunday": {"time": "08:30", "type": "WOD", "series_id": 187541},
+    "Tuesday": {"time": "18:30", "type": "WOD", "series_id": 3300},
+    "Thursday": {"time": "08:30", "type": "WOD", "series_id": 187542},
+    "Friday": {"time": "08:30", "type": "WOD", "series_id": 2498},
 }
-DATE_OVERRIDES = {}
+DATE_OVERRIDES: dict[str, dict] = {}
+
+PROJECT_DIR = Path(__file__).resolve().parent
 
 # Load Configuration from external config.json
-config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-if os.path.exists(config_path):
+config_path = PROJECT_DIR / "config.json"
+if config_path.exists():
     try:
-        with open(config_path, 'r', encoding='utf-8') as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             config_data = json.load(f)
-            TARGET_CONFIG = config_data.get('TARGET_CONFIG', TARGET_CONFIG)
-            DATE_OVERRIDES = config_data.get('DATE_OVERRIDES', DATE_OVERRIDES)
+            TARGET_CONFIG = config_data.get("TARGET_CONFIG") or TARGET_CONFIG
+            DATE_OVERRIDES = config_data.get("DATE_OVERRIDES") or DATE_OVERRIDES
             logger.info("Loaded target configuration from config.json.")
     except Exception as e:
         logger.warning(f"Failed to load config.json ({e}). Using default configuration.")
@@ -66,17 +76,18 @@ else:
     logger.info("config.json not found. Using default configuration.")
 
 # Purge stale report files at startup
-for stale_file in ['schedule.html', 'schedule_output.json']:
-    stale_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), stale_file)
-    if os.path.exists(stale_path):
+for stale_name in ["schedule.html", "schedule_output.json"]:
+    stale_file = PROJECT_DIR / stale_name
+    if stale_file.exists():
         try:
-            os.remove(stale_path)
-            logger.info(f"Purged stale execution report: {stale_file}")
+            stale_file.unlink()
+            logger.info(f"Purged stale execution report: {stale_name}")
         except Exception as e:
-            logger.warning(f"Could not purge stale file {stale_file}: {e}")
+            logger.warning(f"Could not purge stale file {stale_name}: {e}")
 
 # SET TO False TO ACTUALLY BOOK CLASSES
-DRY_RUN = os.getenv('DRY_RUN', 'False').lower() == 'true'
+DRY_RUN = os.getenv("DRY_RUN", "False").lower() == "true"
+
 
 def get_israel_time() -> datetime:
     """Returns the current time in Israel using the Asia/Jerusalem timezone.
@@ -86,8 +97,9 @@ def get_israel_time() -> datetime:
     """
     return datetime.now(ZoneInfo("Asia/Jerusalem"))
 
+
 def send_ntfy(title: str, message: str, priority: str = "default", tags: str = "") -> bool:
-    """Send push notification via ntfy.sh
+    """Send push notification via ntfy.sh within allowed evening window.
 
     Args:
         title: Notification title.
@@ -123,24 +135,92 @@ def send_ntfy(title: str, message: str, priority: str = "default", tags: str = "
         logger.error(f"Failed to send ntfy: {e}")
         return False
 
+
 def is_user_booked_for_schedule(entry: dict | None) -> bool:
     """Checks if the user is already booked for the given schedule entry.
 
     Args:
-        entry: Schedule entry dictionary.
+        entry: Schedule entry dictionary or None.
 
     Returns:
         bool: True if user is booked/signed up, False otherwise.
     """
     if not isinstance(entry, dict):
         return False
-    
+
     signed = entry.get("is_user_signed_to_schedule")
     if bool(signed):
         return True
-    
+
     booking_option = str(entry.get("booking_option") or "").strip().lower()
     return booking_option == "cancelscheduleuser"
+
+
+def extract_coach_name(entry: dict | None) -> str:
+    """Extracts a normalized coach name string from a schedule entry dictionary.
+
+    Args:
+        entry: Schedule entry dictionary or None.
+
+    Returns:
+        str: Extracted coach full name, or empty string if unavailable.
+    """
+    if not isinstance(entry, dict):
+        return ""
+    coach_data = entry.get("coach")
+    if isinstance(coach_data, dict):
+        return (
+            coach_data.get("full_name")
+            or coach_data.get("name")
+            or f"{coach_data.get('first_name', '')} {coach_data.get('last_name', '')}"
+        ).strip()
+    if isinstance(coach_data, str):
+        return coach_data.strip()
+    return ""
+
+
+def extract_training_type(entry: dict | None) -> str:
+    """Extracts the training category or series name from a schedule entry.
+
+    Args:
+        entry: Schedule entry dictionary or None.
+
+    Returns:
+        str: Identified training category name, or default 'WOD'.
+    """
+    if not isinstance(entry, dict):
+        return "WOD"
+    box_cats = entry.get("box_categories")
+    if isinstance(box_cats, dict) and box_cats.get("name"):
+        return str(box_cats["name"]).strip()
+    series_data = entry.get("series")
+    if isinstance(series_data, dict) and series_data.get("series_name"):
+        return str(series_data["series_name"]).strip()
+    return "WOD"
+
+
+def extract_spots(entry: dict | None) -> tuple[int, int, int]:
+    """Safely extracts participant counts (free, booked, max) from a schedule entry.
+
+    Args:
+        entry: Schedule entry dictionary or None.
+
+    Returns:
+        tuple[int, int, int]: Tuple of (free_spots, booked_spots, max_spots).
+    """
+    if not isinstance(entry, dict):
+        return 0, 0, 0
+    try:
+        max_p = int(entry.get("max_participants") or 0)
+    except (ValueError, TypeError):
+        max_p = 0
+    try:
+        booked_p = int(entry.get("num_signed_to_schedule") or 0)
+    except (ValueError, TypeError):
+        booked_p = 0
+    free_p = max(0, max_p - booked_p)
+    return free_p, booked_p, max_p
+
 
 def wait_for_precision_window(
     target_hour_israel: int = 21,
@@ -161,11 +241,21 @@ def wait_for_precision_window(
         pre_notify_msg: Message preview for 1-minute pre-notification.
     """
     now_isr = get_israel_time()
-    target_time_isr = now_isr.replace(hour=target_hour_israel, minute=target_minute_israel, second=0, microsecond=0)
+    target_time_isr = now_isr.replace(
+        hour=target_hour_israel,
+        minute=target_minute_israel,
+        second=0,
+        microsecond=0,
+    )
 
     # Calculate the expected wake-up time to report delays
     now_utc = datetime.now(timezone.utc)
-    expected_wake = now_utc.replace(hour=expected_wake_hour_utc, minute=expected_wake_minute_utc, second=0, microsecond=0)
+    expected_wake = now_utc.replace(
+        hour=expected_wake_hour_utc,
+        minute=expected_wake_minute_utc,
+        second=0,
+        microsecond=0,
+    )
     if now_utc < expected_wake:
         expected_wake -= timedelta(days=1)
     delay_delta = now_utc - expected_wake
@@ -211,12 +301,13 @@ def wait_for_precision_window(
             # Periodic progress update for terminal logs
             print(f"T-minus {int(remaining)} seconds...", end="\r")
             time.sleep(0.5)
-        elif sys.platform == "win32" and remaining < 0.1:
-            # Under Windows, when very close to trigger (< 100ms), use busy-wait for sub-millisecond accuracy
+        elif remaining < 0.05:
+            # Busy-wait for sub-millisecond accuracy when within 50ms of target
             while (target_time_isr - get_israel_time()).total_seconds() > 0:
                 pass
         else:
             time.sleep(0.001)
+
 
 def select_target_entry(
     target_info_list: list[dict],
@@ -240,51 +331,50 @@ def select_target_entry(
     if not target_info_list:
         return None
 
+    valid_entries = [e for e in target_info_list if isinstance(e, dict)]
+    if not valid_entries:
+        return None
+
     # 1. Highest Priority: Match target_series_id directly regardless of coach name
     if target_series_id is not None:
-        for entry in target_info_list:
-            entry_series_id = (entry.get("series") or {}).get("id")
+        for entry in valid_entries:
+            series_obj = entry.get("series")
+            entry_series_id = series_obj.get("id") if isinstance(series_obj, dict) else None
             if entry_series_id is not None and str(entry_series_id) == str(target_series_id):
                 return entry
-
-    def get_coach_name(entry_obj: dict) -> str:
-        c_data = entry_obj.get("coach") or {}
-        if isinstance(c_data, dict):
-            return (c_data.get("full_name") or c_data.get("name") or f"{c_data.get('first_name', '')} {c_data.get('last_name', '')}").strip()
-        if isinstance(c_data, str):
-            return c_data.strip()
-        return ""
 
     def score_entry(entry: dict) -> int:
         score = 0
         if entry.get("booking_option"):
             score += 20
-        ser_name = (entry.get("series") or {}).get("series_name", "")
+        ser_name = extract_training_type(entry)
         if target_time and target_time in ser_name:
             score += 10
-        if entry.get("free") is not None and entry.get("free") > 0:
+        free_spots = entry.get("free")
+        if isinstance(free_spots, (int, float)) and free_spots > 0:
             score += 5
         return score
 
-    sorted_list = sorted(target_info_list, key=score_entry, reverse=True)
+    sorted_list = sorted(valid_entries, key=score_entry, reverse=True)
 
     if target_coach:
         if target_coach.lower().startswith("not "):
             exclude_coach = target_coach[4:].strip().lower()
             for entry in sorted_list:
-                if exclude_coach not in get_coach_name(entry).lower():
+                if exclude_coach not in extract_coach_name(entry).lower():
                     return entry
         else:
             for entry in sorted_list:
-                if target_coach.lower() in get_coach_name(entry).lower():
+                if target_coach.lower() in extract_coach_name(entry).lower():
                     return entry
 
     if always_exclude:
         for entry in sorted_list:
-            if always_exclude.lower() not in get_coach_name(entry).lower():
+            if always_exclude.lower() not in extract_coach_name(entry).lower():
                 return entry
 
     return sorted_list[0] if sorted_list else None
+
 
 def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool, str]:
     """Attempts to book a class using the V2 Arbox API.
@@ -297,10 +387,16 @@ def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool,
         tuple[bool, str]: Tuple of (success_status, status_message).
     """
     url = "https://apiappv2.arboxapp.com/api/v2/scheduleUser/insert?XDEBUG_SESSION_START=PHPSTORM"
+    try:
+        membership_id_int = int(MEMBERSHIP_USER_ID)
+        schedule_id_int = int(schedule_id)
+    except (ValueError, TypeError) as e:
+        return False, f"Invalid membership or schedule ID: {e}"
+
     payload = {
         "extras": None,
-        "membership_user_id": int(MEMBERSHIP_USER_ID),
-        "schedule_id": int(schedule_id),
+        "membership_user_id": membership_id_int,
+        "schedule_id": schedule_id_int,
     }
 
     if DRY_RUN:
@@ -328,7 +424,7 @@ def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool,
                 return True, msg
 
             # Extract detailed user-facing error message from Arbox JSON
-            err_obj = resp_json.get("error")
+            err_obj = resp_json.get("error") if isinstance(resp_json, dict) else None
             if isinstance(err_obj, dict):
                 arbox_err = err_obj.get("messageToUser") or err_obj.get("message") or ""
             elif isinstance(err_obj, str):
@@ -336,8 +432,10 @@ def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool,
             else:
                 arbox_err = ""
 
-            if not arbox_err:
+            if not arbox_err and isinstance(resp_json, dict):
                 arbox_err = resp_json.get("message") or resp.text[:200]
+            elif not arbox_err:
+                arbox_err = resp.text[:200]
 
             last_error_msg = f"Failed to book (Status {resp.status_code}): {arbox_err}"
             logger.error(f"Attempt {attempt} - {last_error_msg}")
@@ -364,6 +462,7 @@ def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool,
         time.sleep(sleep_time)
 
     return False, last_error_msg
+
 
 def generate_html_table(classes_info: list[dict], date_range_str: str, status_html: str = "") -> str:
     """Generates an HTML table summary of the schedule and booking status.
@@ -462,7 +561,11 @@ def generate_html_table(classes_info: list[dict], date_range_str: str, status_ht
         row_class = "target" if is_target else ""
 
         if is_target:
-            status_badge = '<span class="badge booked">SECURED</span>' if cls.get("was_booked") else '<span class="badge missed" style="background:#ef4444">MISSED</span>'
+            status_badge = (
+                '<span class="badge booked">SECURED</span>'
+                if cls.get("was_booked")
+                else '<span class="badge missed" style="background:#ef4444">MISSED</span>'
+            )
         else:
             status_badge = '<span style="color:#cbd5e1">-</span>'
 
@@ -480,9 +583,11 @@ def generate_html_table(classes_info: list[dict], date_range_str: str, status_ht
 </body>
 </html>
 """
-    with open("schedule.html", "w", encoding="utf-8") as f:
+    output_path = PROJECT_DIR / "schedule.html"
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_content)
     return html_content
+
 
 def main() -> None:
     """Main entrypoint for schedule scanning and precision automated booking."""
@@ -509,10 +614,10 @@ def main() -> None:
 
     # 1. Load cached token or login if missing/invalid
     login_url = "https://apiappv2.arboxapp.com/api/v2/user/siteLogin"
-    session_cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session.json")
+    session_cache_path = PROJECT_DIR / "session.json"
     token = None
 
-    if os.path.exists(session_cache_path):
+    if session_cache_path.exists():
         try:
             with open(session_cache_path, "r", encoding="utf-8") as f:
                 cache_data = json.load(f)
@@ -583,11 +688,12 @@ def main() -> None:
         resp.raise_for_status()
         resp_data = resp.json()
         if isinstance(resp_data, dict):
-            events = resp_data.get("data") or []
+            raw_events = resp_data.get("data") or []
         elif isinstance(resp_data, list):
-            events = resp_data
+            raw_events = resp_data
         else:
-            events = []
+            raw_events = []
+        events = [e for e in raw_events if isinstance(e, dict)]
 
         if day_config:
             target_time = day_config["time"]
@@ -599,26 +705,26 @@ def main() -> None:
             # Match by training type if specified (e.g., "WOD")
             if target_type:
                 def matches_training_type(entry_item: dict) -> bool:
-                    cat_name = ((entry_item.get("box_categories") or {}).get("name") or "").strip().lower()
-                    if cat_name:
-                        return target_type.lower() in cat_name
-                    ser_name = ((entry_item.get("series") or {}).get("series_name") or "").strip().lower()
-                    return target_type.lower() in ser_name
+                    cat_name = extract_training_type(entry_item).lower()
+                    return target_type.lower() in cat_name
 
                 target_info_list = [entry for entry in target_info_list if matches_training_type(entry)]
 
             target_series_id = day_config.get("series_id")
-            target_entry = select_target_entry(target_info_list, target_coach, target_time=target_time, target_series_id=target_series_id)
+            target_entry = select_target_entry(
+                target_info_list,
+                target_coach,
+                target_time=target_time,
+                target_series_id=target_series_id,
+            )
 
             if target_entry:
                 target_class_id = target_entry.get("id")
-                coach_name = target_entry.get("coach", {}).get("name", "Unknown")
+                coach_name = extract_coach_name(target_entry) or "Unknown"
 
                 # Check registration status
                 is_already_booked = is_user_booked_for_schedule(target_entry)
-                spots_max = target_entry.get("max_participants", 0)
-                spots_booked = target_entry.get("num_signed_to_schedule", 0)
-                spots_free = spots_max - spots_booked
+                spots_free, spots_booked, spots_max = extract_spots(target_entry)
 
                 target_summary = f"{tomorrow_day} {tomorrow} at {target_time} (Coach: {coach_name})"
                 target_summary_with_spots = f"{target_summary}\nSpots: {spots_free}/{spots_max}"
@@ -681,11 +787,12 @@ def main() -> None:
             resp.raise_for_status()
             resp_data = resp.json()
             if isinstance(resp_data, dict):
-                events = resp_data.get("data") or []
+                raw_events = resp_data.get("data") or []
             elif isinstance(resp_data, list):
-                events = resp_data
+                raw_events = resp_data
             else:
-                events = []
+                raw_events = []
+            events = [e for e in raw_events if isinstance(e, dict)]
         except Exception as e:
             logger.warning(f"Could not fetch updated schedule for HTML report ({e}). Using pre-scan events.")
 
@@ -693,10 +800,8 @@ def main() -> None:
             schedule_id = entry.get("id")
             is_best_match = (schedule_id == target_class_id)
 
-            # Extract basic info for table
             hour = entry.get("time", "")
-            box_cats = entry.get("box_categories") or {}
-            training = box_cats.get("name") or entry.get("series", {}).get("series_name") or "WOD"
+            training = extract_training_type(entry)
 
             classes_info.append({
                 "day": tomorrow_day,
@@ -726,5 +831,7 @@ def main() -> None:
         ntfy_msg = "\n".join(booking_summaries)
         send_ntfy(ntfy_title, ntfy_msg, priority="high")
 
+
 if __name__ == "__main__":
     main()
+
