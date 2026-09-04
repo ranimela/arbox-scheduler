@@ -168,19 +168,73 @@ def _is_truthy_flag(val: Any) -> bool:
     if isinstance(val, str):
         v = val.strip().lower()
         v_norm = v.replace("_", "").replace("-", "")
+        # Explicit false or canceled states
+        if v in (
+            "false",
+            "0",
+            "no",
+            "",
+            "none",
+            "null",
+            "unbooked",
+            "unsigned",
+            "unregistered",
+        ) or v_norm in (
+            "canceled",
+            "cancelled",
+            "cancelling",
+            "cancellation",
+            "deleted",
+            "inactive",
+        ):
+            return False
+        # Explicit truthy booking actions/states
         if (
             v in ("true", "1", "yes", "booked", "signed", "registered")
-            or v_norm.startswith("cancel")
-            or "cancelschedule" in v_norm
+            or v_norm
+            in ("cancelscheduleuser", "cancelschedule", "cancelbooking", "cancel")
+            or (
+                "cancelschedule" in v_norm
+                and not ("canceled" in v_norm or "cancelled" in v_norm)
+            )
         ):
             return True
-        if v in ("false", "0", "no", "", "none", "null", "unbooked", "unsigned"):
-            return False
         try:
             return float(v) > 0
         except ValueError:
             return False
-    if isinstance(val, (dict, list, set, tuple)):
+    if isinstance(val, dict):
+        if not val:
+            return False
+        # Check if booking dictionary indicates a cancelled or deleted record
+        status = (
+            str(val.get("status") or val.get("booking_status") or "").strip().lower()
+        )
+        if status in (
+            "canceled",
+            "cancelled",
+            "deleted",
+            "inactive",
+            "unregistered",
+            "0",
+            "false",
+        ):
+            return False
+        if (
+            val.get("is_canceled")
+            or val.get("is_cancelled")
+            or val.get("canceled")
+            or val.get("cancelled")
+        ):
+            return False
+        if val.get("deleted_at"):
+            return False
+        # If an ID field exists, ensure it is non-null and non-zero
+        if "id" in val and not val["id"]:
+            return False
+        # Ensure at least one value is non-None/non-empty
+        return any(bool(v) for v in val.values() if v is not False)
+    if isinstance(val, (list, set, tuple)):
         return len(val) > 0
     return False
 
@@ -189,8 +243,8 @@ def is_user_booked_for_schedule(entry: dict | None) -> bool:
     """Checks if the user is already booked for the given schedule entry.
 
     Inspects Arbox registration flags including is_user_signed_to_schedule,
-    user_booked, is_signed, cancelScheduleUser, num_user_signed, and booking_option,
-    supporting snake_case, camelCase, PascalCase, and kebab-case variants.
+    user_booked, is_signed, cancelScheduleUser, num_user_signed, schedule_user,
+    and booking_option, supporting snake_case, camelCase, PascalCase, and kebab-case variants.
 
     Args:
         entry: Schedule entry dictionary or None.
@@ -201,15 +255,36 @@ def is_user_booked_for_schedule(entry: dict | None) -> bool:
     if not isinstance(entry, dict):
         return False
 
+    # Check top-level user/booking status if explicitly canceled
+    user_status = (
+        str(entry.get("user_status") or entry.get("booking_status") or "")
+        .strip()
+        .lower()
+    )
+    if user_status in ("canceled", "cancelled", "deleted", "unregistered"):
+        return False
+
     flag_fields_normalized = {
         "isusersignedtoschedule",
         "userbooked",
+        "isbooked",
         "issigned",
         "usersigned",
         "isusersigned",
+        "userregistered",
+        "isregistered",
         "cancelscheduleuser",
         "cancelschedule",
         "scheduleuser",
+        "scheduleuserid",
+        "userscheduleid",
+        "scheduleuserfk",
+    }
+
+    count_fields_normalized = {
+        "numusersigned",
+        "numsigneduser",
+        "numuserregistered",
     }
 
     for k, v in entry.items():
@@ -217,19 +292,59 @@ def is_user_booked_for_schedule(entry: dict | None) -> bool:
             continue
         k_norm = k.strip().lower().replace("_", "").replace("-", "")
 
-        # Check boolean/flag fields
+        # Check boolean/flag fields and object representations
         if k_norm in flag_fields_normalized and _is_truthy_flag(v):
             return True
 
         # Check numeric signed count for user
-        if k_norm == "numusersigned" and _is_truthy_flag(v):
+        if k_norm in count_fields_normalized and _is_truthy_flag(v):
             return True
 
         # Check booking_option (e.g. cancelScheduleUser, cancel_schedule_user, cancel)
         if k_norm in ("bookingoption", "bookingoptions"):
-            bo_norm = str(v or "").strip().lower().replace("_", "").replace("-", "")
-            if bo_norm.startswith("cancel") or "cancelschedule" in bo_norm:
-                return True
+            if isinstance(v, dict):
+                action = (
+                    str(v.get("action") or v.get("type") or v.get("name") or "")
+                    .strip()
+                    .lower()
+                    .replace("_", "")
+                    .replace("-", "")
+                )
+                if action in ("canceled", "cancelled", "cancelling", "cancellation"):
+                    continue
+                if action in (
+                    "cancelscheduleuser",
+                    "cancelschedule",
+                    "cancelbooking",
+                    "cancel",
+                ) or (
+                    "cancelschedule" in action
+                    and not ("canceled" in action or "cancelled" in action)
+                ):
+                    return True
+            else:
+                bo_norm = str(v or "").strip().lower().replace("_", "").replace("-", "")
+                if bo_norm in ("canceled", "cancelled", "cancelling", "cancellation"):
+                    continue
+                if bo_norm in (
+                    "cancelscheduleuser",
+                    "cancelschedule",
+                    "cancelbooking",
+                    "cancel",
+                ) or (
+                    "cancelschedule" in bo_norm
+                    and not ("canceled" in bo_norm or "cancelled" in bo_norm)
+                ):
+                    return True
+
+    # Check nested user object if present
+    user_obj = entry.get("user")
+    if isinstance(user_obj, dict):
+        for uk, uv in user_obj.items():
+            if isinstance(uk, str):
+                uk_norm = uk.strip().lower().replace("_", "").replace("-", "")
+                if uk_norm in flag_fields_normalized and _is_truthy_flag(uv):
+                    return True
 
     return False
 
@@ -294,14 +409,28 @@ def extract_spots(entry: dict | None) -> tuple[int, int, int]:
     if not isinstance(entry, dict):
         return 0, 0, 0
     try:
-        max_p = int(entry.get("max_participants") or 0)
+        max_p = int(entry.get("max_participants") or entry.get("maxParticipants") or 0)
     except (ValueError, TypeError):
         max_p = 0
     try:
-        booked_p = int(entry.get("num_signed_to_schedule") or 0)
+        booked_p = int(
+            entry.get("num_signed_to_schedule") or entry.get("numSignedToSchedule") or 0
+        )
     except (ValueError, TypeError):
         booked_p = 0
     free_p = max(0, max_p - booked_p)
+    if free_p == 0:
+        free_val = (
+            entry.get("free")
+            or entry.get("free_spots")
+            or entry.get("freeSpots")
+            or entry.get("free_places")
+        )
+        if free_val is not None:
+            try:
+                free_p = max(0, int(free_val))
+            except (ValueError, TypeError):
+                pass
     return free_p, booked_p, max_p
 
 
@@ -494,6 +623,12 @@ ALREADY_BOOKED_PATTERNS: tuple[str, ...] = (
     "already_enrolled",
     "already enrolled",
     "alreadyenrolled",
+    "already_reserved",
+    "already reserved",
+    "alreadyreserved",
+    "already_exists",
+    "already exists",
+    "alreadyexists",
     "user_already_registered",
     "user already registered",
     "useralreadyregistered",
@@ -509,6 +644,15 @@ ALREADY_BOOKED_PATTERNS: tuple[str, ...] = (
     "user_already_enrolled",
     "user already enrolled",
     "useralreadyenrolled",
+    "user_already_reserved",
+    "user already reserved",
+    "useralreadyreserved",
+    "user_already_exists",
+    "user already exists",
+    "useralreadyexists",
+    "schedule_user_already_exists",
+    "schedule user already exists",
+    "scheduleuseralreadyexists",
     # Hebrew variations
     "כבר רשום",
     "כבררשום",
@@ -540,10 +684,24 @@ ALREADY_BOOKED_PATTERNS: tuple[str, ...] = (
     "נרשמתכבר",
     "משתמש רשום",
     "משתמשרשום",
+    "משתמשת רשומה",
+    "משתמשתרשומה",
+    "משתמש כבר רשום",
+    "משתמשכבררשום",
+    "המשתמש כבר רשום",
+    "המשתמשכבררשום",
+    "משתמש כבר נרשם",
+    "משתמשכברנרשם",
+    "המשתמש כבר נרשם",
+    "המשתמשכברנרשם",
     "רישום כפול",
     "רישוםכפול",
     "קיים רישום",
     "קייםרישום",
+    "כבר שוריין",
+    "כברשוריין",
+    "שוריין כבר",
+    "שורייןכבר",
 )
 
 
@@ -572,7 +730,30 @@ def normalize_response_text(text: str | bytes | Any) -> str:
             pass
     cleaned = html.unescape(text)
     if "<" in cleaned and ">" in cleaned:
-        cleaned = re.sub(r"<(?:/?[a-zA-Z][^>]*|!--.*?--)>", " ", cleaned)
+        # Strip multiline comments, CDATA, and HTML tags
+        cleaned = re.sub(r"<!--.*?-->", " ", cleaned, flags=re.DOTALL)
+        cleaned = re.sub(r"<!\[CDATA\[.*?\]\]>", " ", cleaned, flags=re.DOTALL)
+        cleaned = re.sub(r"</?[a-zA-Z][^>]*>", " ", cleaned)
+    # Decode hex escapes (e.g. \x20 or \xd7\x9b)
+    if "\\x" in cleaned or "\\X" in cleaned:
+        try:
+            cleaned = re.sub(
+                r"(?:\\x[0-9a-fA-F]{2})+",
+                lambda m: bytes.fromhex(
+                    m.group(0).replace("\\x", "").replace("\\X", "")
+                ).decode("utf-8", errors="replace"),
+                cleaned,
+            )
+        except Exception:
+            try:
+                cleaned = re.sub(
+                    r"\\x([0-9a-fA-F]{2})",
+                    lambda m: chr(int(m.group(1), 16)),
+                    cleaned,
+                )
+            except Exception:
+                pass
+    # Decode 16-bit and 32-bit unicode escapes
     if "\\u" in cleaned or "\\U" in cleaned:
         try:
             cleaned = re.sub(
@@ -675,8 +856,19 @@ def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool,
             except Exception:
                 resp_json = {}
 
+            # Defensively extract raw text and raw content
+            raw_text = None
+            try:
+                raw_text = resp.text
+            except Exception:
+                pass
+            if not raw_text:
+                try:
+                    raw_text = resp.content
+                except Exception:
+                    pass
+
             # Check for already registered across all response formats and languages
-            raw_text = getattr(resp, "text", None) or getattr(resp, "content", None)
             if is_already_registered_response(resp_json, raw_text):
                 msg = "Successfully secured spot! (Already Registered)"
                 logger.info(f"{msg} - Attempt {attempt}")
@@ -697,10 +889,11 @@ def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool,
             else:
                 arbox_err = ""
 
+            text_preview = str(raw_text or "")[:200]
             if not arbox_err and isinstance(resp_json, dict):
-                arbox_err = resp_json.get("message") or resp.text[:200]
+                arbox_err = resp_json.get("message") or text_preview
             elif not arbox_err:
-                arbox_err = resp.text[:200]
+                arbox_err = text_preview
 
             last_error_msg = f"Failed to book (Status {resp.status_code}): {arbox_err}"
             logger.error(f"Attempt {attempt} - {last_error_msg}")
@@ -1032,7 +1225,7 @@ def main() -> None:
 
                 # Check registration status
                 is_already_booked = is_user_booked_for_schedule(target_entry)
-                spots_free, spots_booked, spots_max = extract_spots(target_entry)
+                spots_free, _spots_booked, spots_max = extract_spots(target_entry)
 
                 target_summary = (
                     f"{tomorrow_day} {tomorrow} at {target_time} (Coach: {coach_name})"
@@ -1130,7 +1323,11 @@ def main() -> None:
 
         for entry in events:
             schedule_id = entry.get("id")
-            is_best_match = schedule_id == target_class_id
+            is_best_match = (
+                schedule_id is not None
+                and target_class_id is not None
+                and str(schedule_id) == str(target_class_id)
+            )
 
             hour = entry.get("time", "")
             training = extract_training_type(entry)
@@ -1141,7 +1338,7 @@ def main() -> None:
                     "date": tomorrow,
                     "hour": hour,
                     "training": training,
-                    "was_booked": True if (is_best_match and success) else False,
+                    "was_booked": bool(is_best_match and success),
                     "best_match": is_best_match,
                 }
             )
