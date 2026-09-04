@@ -9,9 +9,11 @@ import logging
 import os
 from pathlib import Path
 import random
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import requests
@@ -136,8 +138,41 @@ def send_ntfy(title: str, message: str, priority: str = "default", tags: str = "
         return False
 
 
+def _is_truthy_flag(val: Any) -> bool:
+    """Helper to determine if a value represents a truthy booking status flag.
+
+    Args:
+        val: Any field value from the Arbox API entry.
+
+    Returns:
+        bool: True if the value indicates a booked/signed-up status.
+    """
+    if val is None or val is False:
+        return False
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val > 0
+    if isinstance(val, str):
+        v = val.strip().lower()
+        if v in ("true", "1", "yes", "cancelscheduleuser"):
+            return True
+        if v in ("false", "0", "no", "", "none", "null"):
+            return False
+        try:
+            return float(v) > 0
+        except ValueError:
+            return False
+    if isinstance(val, (dict, list)):
+        return len(val) > 0
+    return False
+
+
 def is_user_booked_for_schedule(entry: dict | None) -> bool:
     """Checks if the user is already booked for the given schedule entry.
+
+    Inspects Arbox registration flags including is_user_signed_to_schedule,
+    user_booked, is_signed, cancelScheduleUser, num_user_signed, and booking_option.
 
     Args:
         entry: Schedule entry dictionary or None.
@@ -148,15 +183,28 @@ def is_user_booked_for_schedule(entry: dict | None) -> bool:
     if not isinstance(entry, dict):
         return False
 
-    signed = entry.get("is_user_signed_to_schedule")
-    if isinstance(signed, str):
-        if signed.strip().lower() in ("true", "1"):
+    # Check boolean/flag fields
+    flag_fields = (
+        "is_user_signed_to_schedule",
+        "user_booked",
+        "is_signed",
+        "cancelScheduleUser",
+        "cancel_schedule_user",
+    )
+    for field in flag_fields:
+        if field in entry and _is_truthy_flag(entry.get(field)):
             return True
-    elif bool(signed):
+
+    # Check numeric signed count for user
+    if "num_user_signed" in entry and _is_truthy_flag(entry.get("num_user_signed")):
         return True
 
+    # Check booking_option
     booking_option = str(entry.get("booking_option") or "").strip().lower()
-    return booking_option == "cancelscheduleuser"
+    if booking_option == "cancelscheduleuser":
+        return True
+
+    return False
 
 
 def extract_coach_name(entry: dict | None) -> str:
@@ -393,6 +441,80 @@ def select_target_entry(
     return sorted_list[0] if sorted_list else None
 
 
+ALREADY_BOOKED_PATTERNS: tuple[str, ...] = (
+    "alreadyregistered",
+    "already_registered",
+    "already registered",
+    "already_signed",
+    "already signed",
+    "alreadysigned",
+    "user_already_registered",
+    "user already registered",
+    "useralreadyregistered",
+    "user_already_signed",
+    "user already signed",
+    "useralreadysigned",
+    "כבר רשום",
+    "כבררשום",
+    "כבר רשומה",
+    "כבררשומה",
+    "הנך רשום",
+    "הנךרשום",
+    "הנך רשומה",
+    "הנךרשומה",
+)
+
+
+def normalize_response_text(text: str) -> str:
+    """Normalizes response text by converting to lowercase and stripping spaces, underscores, hyphens, and punctuation.
+
+    Args:
+        text: Input string to normalize.
+
+    Returns:
+        str: Normalized alphanumeric lowercase string.
+    """
+    if not text or not isinstance(text, str):
+        return ""
+    lowered = text.lower()
+    return re.sub(r"[\s_\-\W]+", "", lowered)
+
+
+def is_already_registered_response(resp_json: Any, resp_text: str | None = None) -> bool:
+    """Checks whether the response indicates the user is already booked/registered.
+
+    Args:
+        resp_json: Parsed response payload (dict, list, or primitive).
+        resp_text: Raw response body string.
+
+    Returns:
+        bool: True if any already-registered pattern matches, False otherwise.
+    """
+    raw_candidates: list[str] = []
+    if resp_text and isinstance(resp_text, str):
+        raw_candidates.append(resp_text)
+
+    if isinstance(resp_json, (dict, list)):
+        try:
+            raw_candidates.append(json.dumps(resp_json, ensure_ascii=False))
+        except Exception:
+            raw_candidates.append(str(resp_json))
+    elif resp_json is not None:
+        raw_candidates.append(str(resp_json))
+
+    combined_raw = " ".join(raw_candidates).lower()
+    combined_norm = normalize_response_text(" ".join(raw_candidates))
+
+    for pattern in ALREADY_BOOKED_PATTERNS:
+        if pattern.lower() in combined_raw:
+            return True
+        norm_pat = normalize_response_text(pattern)
+        if norm_pat and norm_pat in combined_norm:
+            return True
+
+    return False
+
+
 def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool, str]:
     """Attempts to book a class using the V2 Arbox API.
 
@@ -431,12 +553,15 @@ def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool,
             except Exception:
                 resp_json = {}
 
-            # Check for success or already registered
-            is_already_in = "alreadyregistered" in str(resp_json).lower() or "alreadyregistered" in resp.text.lower()
+            # Check for already registered across all response formats and languages
+            if is_already_registered_response(resp_json, resp.text):
+                msg = "Successfully secured spot! (Already Registered)"
+                logger.info(f"{msg} - Attempt {attempt}")
+                return True, msg
 
-            if resp.status_code == 200 or is_already_in:
-                status = "Confirmed" if resp.status_code == 200 else "Already Registered"
-                msg = f"Successfully secured spot! ({status}) - Attempt {attempt}"
+            # Check for confirmed booking success
+            if resp.status_code == 200:
+                msg = f"Successfully secured spot! (Confirmed) - Attempt {attempt}"
                 logger.info(msg)
                 return True, msg
 

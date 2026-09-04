@@ -15,6 +15,7 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from fetch_schedule import (
+    ALREADY_BOOKED_PATTERNS,
     TARGET_CONFIG,
     book_class,
     extract_coach_name,
@@ -22,7 +23,9 @@ from fetch_schedule import (
     extract_training_type,
     generate_html_table,
     get_israel_time,
+    is_already_registered_response,
     is_user_booked_for_schedule,
+    normalize_response_text,
     select_target_entry,
     send_ntfy,
     wait_for_precision_window,
@@ -399,5 +402,173 @@ def test_generate_html_table_missed_badge() -> None:
     ]
     html = generate_html_table(classes_info, "2026-07-10", status_html="Failed")
     assert "MISSED" in html
+
+
+def test_normalize_response_text() -> None:
+    """Verifies normalize_response_text strips whitespace, underscores, hyphens, and punctuation."""
+    assert normalize_response_text("already registered") == "alreadyregistered"
+    assert normalize_response_text("already_registered") == "alreadyregistered"
+    assert normalize_response_text("already-registered") == "alreadyregistered"
+    assert normalize_response_text("already_signed") == "alreadysigned"
+    assert normalize_response_text("user_already_registered") == "useralreadyregistered"
+    assert normalize_response_text("user_already_signed") == "useralreadysigned"
+    assert normalize_response_text("כבר רשום") == "כבררשום"
+    assert normalize_response_text("הנך רשום") == "הנךרשום"
+    assert normalize_response_text("  --User Already_Registered!!  ") == "useralreadyregistered"
+    assert normalize_response_text("כבר-רשום!") == "כבררשום"
+    assert normalize_response_text("הנך, רשום?") == "הנךרשום"
+    assert normalize_response_text("") == ""
+    assert normalize_response_text(None) == ""
+    assert normalize_response_text(123) == ""
+
+
+def test_is_already_registered_response() -> None:
+    """Tests already-registered detection across raw and normalized English and Hebrew responses."""
+    # JSON dict payloads
+    assert is_already_registered_response({"error": "already_registered"}) is True
+    assert is_already_registered_response({"error": "already_signed"}) is True
+    assert is_already_registered_response({"message": "user_already_registered"}) is True
+    assert is_already_registered_response({"message": "user_already_signed"}) is True
+    assert is_already_registered_response({"error": {"messageToUser": "כבר רשום לשיעור זה"}}) is True
+    assert is_already_registered_response({"error": {"message": "הנך רשום לסדרה"}}) is True
+    assert is_already_registered_response({"error": "כבר רשומה"}) is True
+    assert is_already_registered_response({"error": "הנך רשומה"}) is True
+
+    # Raw response text
+    assert is_already_registered_response({}, "User already registered for class") is True
+    assert is_already_registered_response({}, "User already-registered") is True
+    assert is_already_registered_response({}, "הנך רשום!") is True
+    assert is_already_registered_response({}, "כבר רשום") is True
+
+    # Negative responses
+    assert is_already_registered_response({"error": "Class is full"}) is False
+    assert is_already_registered_response({"message": "Membership expired"}) is False
+    assert is_already_registered_response({}, "Bad Gateway") is False
+    assert is_already_registered_response(None, "") is False
+
+
+@pytest.mark.parametrize(
+    "pattern,status_code",
+    [
+        ("already registered", 400),
+        ("already_registered", 400),
+        ("alreadyregistered", 400),
+        ("already_signed", 400),
+        ("already signed", 400),
+        ("user_already_registered", 409),
+        ("user already registered", 409),
+        ("user_already_signed", 409),
+        ("user already signed", 409),
+        ("כבר רשום", 422),
+        ("הנך רשום", 500),
+        ("כבר רשומה", 400),
+        ("הנך רשומה", 400),
+        ("already_registered", 200),
+    ],
+)
+def test_book_class_already_registered_variations_stops_immediately(
+    pattern: str,
+    status_code: int,
+) -> None:
+    """Verifies book_class recognizes all English and Hebrew patterns and halts on Attempt 1 with 0 retries."""
+    mock_session = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = status_code
+    mock_resp.text = json.dumps({"error": f"Prefix {pattern} suffix"}, ensure_ascii=False)
+    mock_resp.json.return_value = {"error": {"message": f"Prefix {pattern} suffix"}}
+    mock_session.post.return_value = mock_resp
+
+    success, msg = book_class(mock_session, 12345)
+    assert success is True
+    assert msg == "Successfully secured spot! (Already Registered)"
+    assert mock_session.post.call_count == 1
+
+
+def test_is_user_booked_for_schedule_expanded_fields() -> None:
+    """Verifies is_user_booked_for_schedule catches all pre-scan signed flags."""
+    # user_booked flag
+    assert is_user_booked_for_schedule({"user_booked": True}) is True
+    assert is_user_booked_for_schedule({"user_booked": 1}) is True
+    assert is_user_booked_for_schedule({"user_booked": "true"}) is True
+    assert is_user_booked_for_schedule({"user_booked": "1"}) is True
+    assert is_user_booked_for_schedule({"user_booked": False}) is False
+    assert is_user_booked_for_schedule({"user_booked": 0}) is False
+    assert is_user_booked_for_schedule({"user_booked": "false"}) is False
+    assert is_user_booked_for_schedule({"user_booked": None}) is False
+
+    # num_user_signed count
+    assert is_user_booked_for_schedule({"num_user_signed": 1}) is True
+    assert is_user_booked_for_schedule({"num_user_signed": 2}) is True
+    assert is_user_booked_for_schedule({"num_user_signed": "1"}) is True
+    assert is_user_booked_for_schedule({"num_user_signed": 0}) is False
+    assert is_user_booked_for_schedule({"num_user_signed": "0"}) is False
+    assert is_user_booked_for_schedule({"num_user_signed": None}) is False
+
+    # is_signed flag
+    assert is_user_booked_for_schedule({"is_signed": True}) is True
+    assert is_user_booked_for_schedule({"is_signed": 1}) is True
+    assert is_user_booked_for_schedule({"is_signed": "true"}) is True
+    assert is_user_booked_for_schedule({"is_signed": False}) is False
+    assert is_user_booked_for_schedule({"is_signed": 0}) is False
+    assert is_user_booked_for_schedule({"is_signed": "false"}) is False
+    assert is_user_booked_for_schedule({"is_signed": None}) is False
+
+    # cancelScheduleUser flag
+    assert is_user_booked_for_schedule({"cancelScheduleUser": True}) is True
+    assert is_user_booked_for_schedule({"cancelScheduleUser": 1}) is True
+    assert is_user_booked_for_schedule({"cancelScheduleUser": "true"}) is True
+    assert is_user_booked_for_schedule({"cancelScheduleUser": "cancelScheduleUser"}) is True
+    assert is_user_booked_for_schedule({"cancelScheduleUser": {"booking_id": 999}}) is True
+    assert is_user_booked_for_schedule({"cancelScheduleUser": False}) is False
+    assert is_user_booked_for_schedule({"cancelScheduleUser": 0}) is False
+    assert is_user_booked_for_schedule({"cancelScheduleUser": None}) is False
+
+    # cancel_schedule_user flag
+    assert is_user_booked_for_schedule({"cancel_schedule_user": True}) is True
+    assert is_user_booked_for_schedule({"cancel_schedule_user": False}) is False
+
+
+def test_book_class_already_registered_raw_text_json_decode_error() -> None:
+    """Verifies book_class detects already-registered from raw text even if json decoding fails."""
+    mock_session = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 400
+    mock_resp.text = "<html><body>Error: הנך רשום כבר לסדרה זו</body></html>"
+    mock_resp.json.side_effect = ValueError("Invalid JSON")
+    mock_session.post.return_value = mock_resp
+
+    success, msg = book_class(mock_session, 12345)
+    assert success is True
+    assert msg == "Successfully secured spot! (Already Registered)"
+    assert mock_session.post.call_count == 1
+
+
+def test_is_user_booked_for_schedule_combinations() -> None:
+    """Tests combinations where some flags are False but others are True."""
+    # is_user_signed_to_schedule False, but user_booked True
+    assert is_user_booked_for_schedule({
+        "is_user_signed_to_schedule": False,
+        "user_booked": True,
+        "booking_option": "book",
+    }) is True
+
+    # is_user_signed_to_schedule False, user_booked False, but num_user_signed 1
+    assert is_user_booked_for_schedule({
+        "is_user_signed_to_schedule": False,
+        "user_booked": False,
+        "num_user_signed": 1,
+        "booking_option": "book",
+    }) is True
+
+    # is_user_signed_to_schedule False, user_booked False, num_user_signed 0, but is_signed True
+    assert is_user_booked_for_schedule({
+        "is_user_signed_to_schedule": False,
+        "user_booked": False,
+        "num_user_signed": 0,
+        "is_signed": True,
+        "booking_option": "book",
+    }) is True
+
+
 
 
