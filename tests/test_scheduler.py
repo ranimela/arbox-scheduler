@@ -1,11 +1,12 @@
 """Unit tests for arbox-scheduler automation and precision booking logic."""
 
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-import sys
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
+
 import pytest
 import requests
 
@@ -505,10 +506,25 @@ def test_normalize_response_text() -> None:
     assert normalize_response_text("הנך, רשום?") == "הנךרשום"
     assert normalize_response_text("כְּבָר רָשׁוּם") == "כבררשום"
     assert (
-        normalize_response_text("<p>already&nbsp;registered</p>")
-        == "palreadyregisteredp"
+        normalize_response_text("<p>already&nbsp;registered</p>") == "alreadyregistered"
     )
-    assert normalize_response_text("<p>כבר&nbsp;רשום</p>") == "pכבררשוםp"
+    assert normalize_response_text("<p>כבר&nbsp;רשום</p>") == "כבררשום"
+    assert normalize_response_text("<p class='msg'>כבר <b>רשום</b></p>") == "כבררשום"
+    assert (
+        normalize_response_text(
+            "<span class='status'>already</span> <span>registered</span>"
+        )
+        == "alreadyregistered"
+    )
+    assert normalize_response_text("already%20registered") == "alreadyregistered"
+    assert (
+        normalize_response_text("%D7%9B%D7%91%D7%A8%20%D7%A8%D7%A9%D7%95%D7%9D")
+        == "כבררשום"
+    )
+    assert (
+        normalize_response_text(r'{"error": "\U000005db\U000005d1\U000005e8"}')
+        == "errorכבר"
+    )
     assert normalize_response_text(b"already_registered") == "alreadyregistered"
     assert normalize_response_text(r'{"error": "\u05db\u05d1\u05e8"}') == "errorכבר"
     assert normalize_response_text("") == ""
@@ -561,6 +577,16 @@ def test_is_already_registered_response() -> None:
     assert is_already_registered_response({"error": "רשומה כבר"}) is True
     assert is_already_registered_response({"error": "כבר נרשמת לשיעור זה"}) is True
     assert is_already_registered_response({"error": "נרשמת כבר"}) is True
+    assert is_already_registered_response({"error": "משתמש כבר נרשם לשיעור"}) is True
+    assert is_already_registered_response({"error": "נרשם כבר לסדרה"}) is True
+    assert is_already_registered_response({"error": "כבר נרשמה"}) is True
+    assert is_already_registered_response({"error": "נרשמה כבר"}) is True
+    assert is_already_registered_response({"error": "משתמש רשום"}) is True
+    assert is_already_registered_response({"error": "רישום כפול"}) is True
+    assert is_already_registered_response({"error": "קיים רישום"}) is True
+    assert is_already_registered_response({"error": "already enrolled"}) is True
+    assert is_already_registered_response({"error": "user already enrolled"}) is True
+    assert is_already_registered_response({"error": "already signed up"}) is True
 
     # Raw response text & HTML
     assert (
@@ -569,11 +595,34 @@ def test_is_already_registered_response() -> None:
     assert is_already_registered_response({}, "User already-registered") is True
     assert is_already_registered_response({}, "<p>already&nbsp;registered</p>") is True
     assert is_already_registered_response({}, "<p>כבר&nbsp;רשום</p>") is True
+    assert (
+        is_already_registered_response({}, "<p class='msg'>כבר <b>רשום</b></p>") is True
+    )
+    assert (
+        is_already_registered_response(
+            {}, "<span class='status'>already</span> <span>registered</span>"
+        )
+        is True
+    )
+    assert is_already_registered_response({}, "already%20registered") is True
+    assert (
+        is_already_registered_response(
+            {}, "%D7%9B%D7%91%D7%A8%20%D7%A8%D7%A9%D7%95%D7%9D"
+        )
+        is True
+    )
     assert is_already_registered_response({}, "הנך רשום!") is True
     assert is_already_registered_response({}, "כבר רשום") is True
     assert (
         is_already_registered_response(
             None, r'{"error": "\u05db\u05d1\u05e8 \u05e8\u05e9\u05d5\u05dd"}'
+        )
+        is True
+    )
+    assert (
+        is_already_registered_response(
+            None,
+            r'{"error": "\U000005db\U000005d1\U000005e8 \U000005e8\U000005e9\U000005d5\U000005dd"}',
         )
         is True
     )
@@ -603,11 +652,15 @@ def test_is_already_registered_response() -> None:
         ("already signed", 400),
         ("already booked", 400),
         ("already_booked", 400),
+        ("already enrolled", 400),
+        ("alreadyenrolled", 400),
+        ("already signed up", 400),
         ("user_already_registered", 409),
         ("user already registered", 409),
         ("user_already_signed", 409),
         ("user already signed", 409),
         ("user_already_booked", 409),
+        ("user already enrolled", 409),
         ("כבר רשום", 422),
         ("הנך רשום", 500),
         ("הינך רשום", 400),
@@ -616,6 +669,13 @@ def test_is_already_registered_response() -> None:
         ("הינך רשומה", 400),
         ("רשום כבר", 400),
         ("רשומה כבר", 400),
+        ("כבר נרשם", 400),
+        ("נרשם כבר", 400),
+        ("כבר נרשמה", 400),
+        ("נרשמה כבר", 400),
+        ("משתמש רשום", 400),
+        ("רישום כפול", 422),
+        ("קיים רישום", 422),
         ("כבר נרשמת", 400),
         ("נרשמת כבר", 400),
         ("already_registered", 200),
@@ -643,17 +703,25 @@ def test_book_class_already_registered_variations_stops_immediately(
 
 def test_is_user_booked_for_schedule_expanded_fields() -> None:
     """Verifies is_user_booked_for_schedule catches all pre-scan signed flags."""
-    # user_booked flag
+    # user_booked flag (snake_case and camelCase)
     assert is_user_booked_for_schedule({"user_booked": True}) is True
     assert is_user_booked_for_schedule({"user_booked": 1}) is True
     assert is_user_booked_for_schedule({"user_booked": "true"}) is True
     assert is_user_booked_for_schedule({"user_booked": "1"}) is True
+    assert is_user_booked_for_schedule({"user_booked": "booked"}) is True
     assert is_user_booked_for_schedule({"user_booked": False}) is False
     assert is_user_booked_for_schedule({"user_booked": 0}) is False
     assert is_user_booked_for_schedule({"user_booked": "false"}) is False
     assert is_user_booked_for_schedule({"user_booked": None}) is False
 
-    # num_user_signed count
+    assert is_user_booked_for_schedule({"userBooked": True}) is True
+    assert is_user_booked_for_schedule({"userBooked": 1}) is True
+    assert is_user_booked_for_schedule({"userBooked": "true"}) is True
+    assert is_user_booked_for_schedule({"userBooked": False}) is False
+    assert is_user_booked_for_schedule({"userBooked": 0}) is False
+    assert is_user_booked_for_schedule({"userBooked": None}) is False
+
+    # num_user_signed count (snake_case and camelCase)
     assert is_user_booked_for_schedule({"num_user_signed": 1}) is True
     assert is_user_booked_for_schedule({"num_user_signed": 2}) is True
     assert is_user_booked_for_schedule({"num_user_signed": "1"}) is True
@@ -661,22 +729,44 @@ def test_is_user_booked_for_schedule_expanded_fields() -> None:
     assert is_user_booked_for_schedule({"num_user_signed": "0"}) is False
     assert is_user_booked_for_schedule({"num_user_signed": None}) is False
 
-    # is_signed flag
+    assert is_user_booked_for_schedule({"numUserSigned": 1}) is True
+    assert is_user_booked_for_schedule({"numUserSigned": 2}) is True
+    assert is_user_booked_for_schedule({"numUserSigned": "1"}) is True
+    assert is_user_booked_for_schedule({"numUserSigned": 0}) is False
+    assert is_user_booked_for_schedule({"numUserSigned": None}) is False
+
+    # is_signed flag (snake_case and camelCase)
     assert is_user_booked_for_schedule({"is_signed": True}) is True
     assert is_user_booked_for_schedule({"is_signed": 1}) is True
     assert is_user_booked_for_schedule({"is_signed": "true"}) is True
+    assert is_user_booked_for_schedule({"is_signed": "signed"}) is True
     assert is_user_booked_for_schedule({"is_signed": False}) is False
     assert is_user_booked_for_schedule({"is_signed": 0}) is False
     assert is_user_booked_for_schedule({"is_signed": "false"}) is False
+    assert is_user_booked_for_schedule({"is_signed": "unsigned"}) is False
     assert is_user_booked_for_schedule({"is_signed": None}) is False
 
-    # user_signed and is_user_signed flags
+    assert is_user_booked_for_schedule({"isSigned": True}) is True
+    assert is_user_booked_for_schedule({"isSigned": 1}) is True
+    assert is_user_booked_for_schedule({"isSigned": False}) is False
+    assert is_user_booked_for_schedule({"isSigned": None}) is False
+
+    # user_signed and is_user_signed flags (snake_case and camelCase)
     assert is_user_booked_for_schedule({"user_signed": True}) is True
+    assert is_user_booked_for_schedule({"user_signed": "registered"}) is True
     assert is_user_booked_for_schedule({"user_signed": False}) is False
+    assert is_user_booked_for_schedule({"userSigned": True}) is True
+    assert is_user_booked_for_schedule({"userSigned": False}) is False
+
     assert is_user_booked_for_schedule({"is_user_signed": True}) is True
     assert is_user_booked_for_schedule({"is_user_signed": False}) is False
+    assert is_user_booked_for_schedule({"isUserSigned": True}) is True
+    assert is_user_booked_for_schedule({"isUserSigned": False}) is False
 
-    # cancelScheduleUser flag
+    assert is_user_booked_for_schedule({"isUserSignedToSchedule": True}) is True
+    assert is_user_booked_for_schedule({"isUserSignedToSchedule": False}) is False
+
+    # cancelScheduleUser flag and cancellation actions
     assert is_user_booked_for_schedule({"cancelScheduleUser": True}) is True
     assert is_user_booked_for_schedule({"cancelScheduleUser": 1}) is True
     assert is_user_booked_for_schedule({"cancelScheduleUser": "true"}) is True
@@ -692,6 +782,10 @@ def test_is_user_booked_for_schedule_expanded_fields() -> None:
         is_user_booked_for_schedule({"cancelScheduleUser": "cancel-schedule-user"})
         is True
     )
+    assert is_user_booked_for_schedule({"cancelScheduleUser": "cancel"}) is True
+    assert (
+        is_user_booked_for_schedule({"cancelScheduleUser": "cancel_schedule"}) is True
+    )
     assert (
         is_user_booked_for_schedule({"cancelScheduleUser": {"booking_id": 999}}) is True
     )
@@ -703,7 +797,14 @@ def test_is_user_booked_for_schedule_expanded_fields() -> None:
     assert is_user_booked_for_schedule({"cancel_schedule_user": True}) is True
     assert is_user_booked_for_schedule({"cancel_schedule_user": False}) is False
 
-    # booking_option variations (camelCase, snake_case, kebab-case)
+    # schedule_user / scheduleUser object inspection
+    assert is_user_booked_for_schedule({"schedule_user": {"id": 12345}}) is True
+    assert is_user_booked_for_schedule({"scheduleUser": {"id": 12345}}) is True
+    assert is_user_booked_for_schedule({"schedule_user": None}) is False
+    assert is_user_booked_for_schedule({"schedule_user": {}}) is False
+    assert is_user_booked_for_schedule({"scheduleUser": {}}) is False
+
+    # booking_option variations (camelCase, snake_case, kebab-case, and cancellation actions)
     assert is_user_booked_for_schedule({"booking_option": "cancelScheduleUser"}) is True
     assert (
         is_user_booked_for_schedule({"booking_option": "cancel_schedule_user"}) is True
@@ -714,6 +815,19 @@ def test_is_user_booked_for_schedule_expanded_fields() -> None:
     assert (
         is_user_booked_for_schedule({"booking_option": "cancel-schedule-user"}) is True
     )
+    assert is_user_booked_for_schedule({"booking_option": "cancel"}) is True
+    assert is_user_booked_for_schedule({"booking_option": "cancel_schedule"}) is True
+    assert is_user_booked_for_schedule({"booking_option": "cancelBooking"}) is True
+    assert is_user_booked_for_schedule({"booking_option": "book"}) is False
+    assert is_user_booked_for_schedule({"booking_option": "join_waitlist"}) is False
+
+    # bookingOption camelCase
+    assert is_user_booked_for_schedule({"bookingOption": "cancelScheduleUser"}) is True
+    assert (
+        is_user_booked_for_schedule({"bookingOption": "cancel_schedule_user"}) is True
+    )
+    assert is_user_booked_for_schedule({"bookingOption": "cancel"}) is True
+    assert is_user_booked_for_schedule({"bookingOption": "book"}) is False
 
 
 def test_book_class_already_registered_raw_text_json_decode_error() -> None:

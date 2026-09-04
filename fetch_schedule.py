@@ -8,16 +8,18 @@ import html
 import json
 import logging
 import os
-from pathlib import Path
 import random
 import re
 import sys
 import time
+import urllib.parse
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
-from dotenv import load_dotenv
+
 import requests
+from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(
@@ -166,9 +168,13 @@ def _is_truthy_flag(val: Any) -> bool:
     if isinstance(val, str):
         v = val.strip().lower()
         v_norm = v.replace("_", "").replace("-", "")
-        if v in ("true", "1", "yes") or v_norm == "cancelscheduleuser":
+        if (
+            v in ("true", "1", "yes", "booked", "signed", "registered")
+            or v_norm.startswith("cancel")
+            or "cancelschedule" in v_norm
+        ):
             return True
-        if v in ("false", "0", "no", "", "none", "null"):
+        if v in ("false", "0", "no", "", "none", "null", "unbooked", "unsigned"):
             return False
         try:
             return float(v) > 0
@@ -183,7 +189,8 @@ def is_user_booked_for_schedule(entry: dict | None) -> bool:
     """Checks if the user is already booked for the given schedule entry.
 
     Inspects Arbox registration flags including is_user_signed_to_schedule,
-    user_booked, is_signed, cancelScheduleUser, num_user_signed, and booking_option.
+    user_booked, is_signed, cancelScheduleUser, num_user_signed, and booking_option,
+    supporting snake_case, camelCase, PascalCase, and kebab-case variants.
 
     Args:
         entry: Schedule entry dictionary or None.
@@ -194,28 +201,37 @@ def is_user_booked_for_schedule(entry: dict | None) -> bool:
     if not isinstance(entry, dict):
         return False
 
-    # Check boolean/flag fields
-    flag_fields = (
-        "is_user_signed_to_schedule",
-        "user_booked",
-        "is_signed",
-        "user_signed",
-        "is_user_signed",
-        "cancelScheduleUser",
-        "cancel_schedule_user",
-    )
-    for field in flag_fields:
-        if field in entry and _is_truthy_flag(entry.get(field)):
+    flag_fields_normalized = {
+        "isusersignedtoschedule",
+        "userbooked",
+        "issigned",
+        "usersigned",
+        "isusersigned",
+        "cancelscheduleuser",
+        "cancelschedule",
+        "scheduleuser",
+    }
+
+    for k, v in entry.items():
+        if not isinstance(k, str):
+            continue
+        k_norm = k.strip().lower().replace("_", "").replace("-", "")
+
+        # Check boolean/flag fields
+        if k_norm in flag_fields_normalized and _is_truthy_flag(v):
             return True
 
-    # Check numeric signed count for user
-    if "num_user_signed" in entry and _is_truthy_flag(entry.get("num_user_signed")):
-        return True
+        # Check numeric signed count for user
+        if k_norm == "numusersigned" and _is_truthy_flag(v):
+            return True
 
-    # Check booking_option (e.g. cancelScheduleUser, cancel_schedule_user)
-    booking_option = str(entry.get("booking_option") or "").strip().lower()
-    booking_option_norm = booking_option.replace("_", "").replace("-", "")
-    return booking_option_norm == "cancelscheduleuser"
+        # Check booking_option (e.g. cancelScheduleUser, cancel_schedule_user, cancel)
+        if k_norm in ("bookingoption", "bookingoptions"):
+            bo_norm = str(v or "").strip().lower().replace("_", "").replace("-", "")
+            if bo_norm.startswith("cancel") or "cancelschedule" in bo_norm:
+                return True
+
+    return False
 
 
 def extract_coach_name(entry: dict | None) -> str:
@@ -424,7 +440,7 @@ def select_target_entry(
 
     def score_entry(entry: dict) -> int:
         score = 0
-        if entry.get("booking_option"):
+        if entry.get("booking_option") or entry.get("bookingOption"):
             score += 20
         ser_name = extract_training_type(entry)
         if target_time and target_time in ser_name:
@@ -469,18 +485,30 @@ ALREADY_BOOKED_PATTERNS: tuple[str, ...] = (
     "already_signed",
     "already signed",
     "alreadysigned",
+    "already_signed_up",
+    "already signed up",
+    "alreadysignedup",
+    "already_booked",
+    "already booked",
+    "alreadybooked",
+    "already_enrolled",
+    "already enrolled",
+    "alreadyenrolled",
     "user_already_registered",
     "user already registered",
     "useralreadyregistered",
     "user_already_signed",
     "user already signed",
     "useralreadysigned",
-    "already_booked",
-    "already booked",
-    "alreadybooked",
+    "user_already_signed_up",
+    "user already signed up",
+    "useralreadysignedup",
     "user_already_booked",
     "user already booked",
     "useralreadybooked",
+    "user_already_enrolled",
+    "user already enrolled",
+    "useralreadyenrolled",
     # Hebrew variations
     "כבר רשום",
     "כבררשום",
@@ -498,10 +526,24 @@ ALREADY_BOOKED_PATTERNS: tuple[str, ...] = (
     "רשוםכבר",
     "רשומה כבר",
     "רשומהכבר",
+    "כבר נרשם",
+    "כברנרשם",
+    "נרשם כבר",
+    "נרשםכבר",
+    "כבר נרשמה",
+    "כברנרשמה",
+    "נרשמה כבר",
+    "נרשמהכבר",
     "כבר נרשמת",
     "כברנרשמת",
     "נרשמת כבר",
     "נרשמתכבר",
+    "משתמש רשום",
+    "משתמשרשום",
+    "רישום כפול",
+    "רישוםכפול",
+    "קיים רישום",
+    "קייםרישום",
 )
 
 
@@ -523,11 +565,23 @@ def normalize_response_text(text: str | bytes | Any) -> str:
             return ""
     if not isinstance(text, str):
         return ""
+    if "%" in text:
+        try:
+            text = urllib.parse.unquote(text)
+        except (ValueError, TypeError):
+            pass
     cleaned = html.unescape(text)
-    if "\\u" in cleaned:
+    if "<" in cleaned and ">" in cleaned:
+        cleaned = re.sub(r"<(?:/?[a-zA-Z][^>]*|!--.*?--)>", " ", cleaned)
+    if "\\u" in cleaned or "\\U" in cleaned:
         try:
             cleaned = re.sub(
                 r"\\u([0-9a-fA-F]{4})",
+                lambda m: chr(int(m.group(1), 16)),
+                cleaned,
+            )
+            cleaned = re.sub(
+                r"\\U([0-9a-fA-F]{8})",
                 lambda m: chr(int(m.group(1), 16)),
                 cleaned,
             )
@@ -622,7 +676,8 @@ def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool,
                 resp_json = {}
 
             # Check for already registered across all response formats and languages
-            if is_already_registered_response(resp_json, resp.text):
+            raw_text = getattr(resp, "text", None) or getattr(resp, "content", None)
+            if is_already_registered_response(resp_json, raw_text):
                 msg = "Successfully secured spot! (Already Registered)"
                 logger.info(f"{msg} - Attempt {attempt}")
                 return True, msg
