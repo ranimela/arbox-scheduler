@@ -105,9 +105,17 @@ def test_extract_coach_name_variations() -> None:
     """Tests extract_coach_name across various Arbox API structures."""
     assert extract_coach_name({"coach": {"full_name": "  Dan Cohen  "}}) == "Dan Cohen"
     assert extract_coach_name({"coach": {"name": "Sara Levi"}}) == "Sara Levi"
-    assert extract_coach_name({"coach": {"first_name": "Alex", "last_name": "Gold"}}) == "Alex Gold"
-    assert extract_coach_name({"coach": {"first_name": "Dan", "last_name": None}}) == "Dan"
-    assert extract_coach_name({"coach": {"first_name": None, "last_name": "Cohen"}}) == "Cohen"
+    assert (
+        extract_coach_name({"coach": {"first_name": "Alex", "last_name": "Gold"}})
+        == "Alex Gold"
+    )
+    assert (
+        extract_coach_name({"coach": {"first_name": "Dan", "last_name": None}}) == "Dan"
+    )
+    assert (
+        extract_coach_name({"coach": {"first_name": None, "last_name": "Cohen"}})
+        == "Cohen"
+    )
     assert extract_coach_name({"coach": {"first_name": None, "last_name": None}}) == ""
     assert extract_coach_name({"coach": " Direct String Name "}) == "Direct String Name"
     assert extract_coach_name({"coach": None}) == ""
@@ -129,9 +137,17 @@ def test_extract_training_type_variations() -> None:
 
 def test_extract_spots_variations() -> None:
     """Tests extract_spots with valid ints, null values, and string representations."""
-    assert extract_spots({"max_participants": 20, "num_signed_to_schedule": 15}) == (5, 15, 20)
-    assert extract_spots({"max_participants": None, "num_signed_to_schedule": None}) == (0, 0, 0)
-    assert extract_spots({"max_participants": "18", "num_signed_to_schedule": "10"}) == (8, 10, 18)
+    assert extract_spots({"max_participants": 20, "num_signed_to_schedule": 15}) == (
+        5,
+        15,
+        20,
+    )
+    assert extract_spots(
+        {"max_participants": None, "num_signed_to_schedule": None}
+    ) == (0, 0, 0)
+    assert extract_spots(
+        {"max_participants": "18", "num_signed_to_schedule": "10"}
+    ) == (8, 10, 18)
     assert extract_spots({}) == (0, 0, 0)
     assert extract_spots(None) == (0, 0, 0)
 
@@ -248,17 +264,78 @@ def test_israel_time_dst_transitions() -> None:
 
 def test_already_booked_detection_scenarios() -> None:
     """Tests is_user_booked_for_schedule against various sign-up and booking flags."""
-    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": True, "booking_option": None}) is True
-    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": 1, "booking_option": None}) is True
-    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": "true", "booking_option": None}) is True
-    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": "1", "booking_option": None}) is True
-    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": "false", "booking_option": "book"}) is False
-    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": "0", "booking_option": "book"}) is False
-    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": None, "booking_option": "cancelScheduleUser"}) is True
-    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": False, "booking_option": "cancelScheduleUser"}) is True
-    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": False, "booking_option": "CancelScheduleUser"}) is True
-    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": False, "booking_option": "book"}) is False
-    assert is_user_booked_for_schedule({"is_user_signed_to_schedule": None, "booking_option": "book"}) is False
+    assert (
+        is_user_booked_for_schedule(
+            {"is_user_signed_to_schedule": True, "booking_option": None}
+        )
+        is True
+    )
+    assert (
+        is_user_booked_for_schedule(
+            {"is_user_signed_to_schedule": 1, "booking_option": None}
+        )
+        is True
+    )
+    assert (
+        is_user_booked_for_schedule(
+            {"is_user_signed_to_schedule": "true", "booking_option": None}
+        )
+        is True
+    )
+    assert (
+        is_user_booked_for_schedule(
+            {"is_user_signed_to_schedule": "1", "booking_option": None}
+        )
+        is True
+    )
+    assert (
+        is_user_booked_for_schedule(
+            {"is_user_signed_to_schedule": "false", "booking_option": "book"}
+        )
+        is False
+    )
+    assert (
+        is_user_booked_for_schedule(
+            {"is_user_signed_to_schedule": "0", "booking_option": "book"}
+        )
+        is False
+    )
+    assert (
+        is_user_booked_for_schedule(
+            {"is_user_signed_to_schedule": None, "booking_option": "cancelScheduleUser"}
+        )
+        is True
+    )
+    assert (
+        is_user_booked_for_schedule(
+            {
+                "is_user_signed_to_schedule": False,
+                "booking_option": "cancelScheduleUser",
+            }
+        )
+        is True
+    )
+    assert (
+        is_user_booked_for_schedule(
+            {
+                "is_user_signed_to_schedule": False,
+                "booking_option": "CancelScheduleUser",
+            }
+        )
+        is True
+    )
+    assert (
+        is_user_booked_for_schedule(
+            {"is_user_signed_to_schedule": False, "booking_option": "book"}
+        )
+        is False
+    )
+    assert (
+        is_user_booked_for_schedule(
+            {"is_user_signed_to_schedule": None, "booking_option": "book"}
+        )
+        is False
+    )
     assert is_user_booked_for_schedule({}) is False
     assert is_user_booked_for_schedule(None) is False
 
@@ -284,7 +361,9 @@ def test_is_user_booked_for_schedule_malformed_inputs() -> None:
     assert is_user_booked_for_schedule(123) is False
     assert is_user_booked_for_schedule(["list"]) is False
     assert is_user_booked_for_schedule({"booking_option": 123}) is False
-    assert is_user_booked_for_schedule({"booking_option": " CANCELscheduleUSER "}) is True
+    assert (
+        is_user_booked_for_schedule({"booking_option": " CANCELscheduleUSER "}) is True
+    )
 
 
 def test_wait_for_precision_window_target_israel_timezone_utc_conversion() -> None:
@@ -317,7 +396,9 @@ def test_send_ntfy_window_filtering(monkeypatch: pytest.MonkeyPatch) -> None:
     assert mock_post.call_count == 1
 
 
-def test_book_class_retryable_errors_then_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_book_class_retryable_errors_then_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tests that book_class retries on transient errors (e.g., 502) and succeeds on recovery."""
     mock_session = MagicMock()
     mock_resp_502 = MagicMock()
@@ -338,7 +419,9 @@ def test_book_class_retryable_errors_then_success(monkeypatch: pytest.MonkeyPatc
     assert mock_session.post.call_count == 2
 
 
-def test_book_class_retryable_connection_timeout_exhaustion(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_book_class_retryable_connection_timeout_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tests book_class handles connection errors and exhausts all 5 retries gracefully."""
     mock_session = MagicMock()
     mock_session.post.side_effect = requests.exceptions.Timeout("Connection timed out")
@@ -414,12 +497,40 @@ def test_normalize_response_text() -> None:
     assert normalize_response_text("user_already_signed") == "useralreadysigned"
     assert normalize_response_text("כבר רשום") == "כבררשום"
     assert normalize_response_text("הנך רשום") == "הנךרשום"
-    assert normalize_response_text("  --User Already_Registered!!  ") == "useralreadyregistered"
+    assert (
+        normalize_response_text("  --User Already_Registered!!  ")
+        == "useralreadyregistered"
+    )
     assert normalize_response_text("כבר-רשום!") == "כבררשום"
     assert normalize_response_text("הנך, רשום?") == "הנךרשום"
+    assert normalize_response_text("כְּבָר רָשׁוּם") == "כבררשום"
+    assert (
+        normalize_response_text("<p>already&nbsp;registered</p>")
+        == "palreadyregisteredp"
+    )
+    assert normalize_response_text("<p>כבר&nbsp;רשום</p>") == "pכבררשוםp"
+    assert normalize_response_text(b"already_registered") == "alreadyregistered"
+    assert normalize_response_text(r'{"error": "\u05db\u05d1\u05e8"}') == "errorכבר"
     assert normalize_response_text("") == ""
     assert normalize_response_text(None) == ""
     assert normalize_response_text(123) == ""
+
+
+def test_already_booked_patterns_contains_all_required_variations() -> None:
+    """Verifies ALREADY_BOOKED_PATTERNS contains all mandatory English and Hebrew phrases."""
+    required_patterns = {
+        "alreadyregistered",
+        "already_registered",
+        "already_signed",
+        "user_already_registered",
+        "user_already_signed",
+        "כבר רשום",
+        "הנך רשום",
+    }
+    for req in required_patterns:
+        assert req in ALREADY_BOOKED_PATTERNS or normalize_response_text(req) in {
+            normalize_response_text(p) for p in ALREADY_BOOKED_PATTERNS
+        }
 
 
 def test_is_already_registered_response() -> None:
@@ -427,22 +538,56 @@ def test_is_already_registered_response() -> None:
     # JSON dict payloads
     assert is_already_registered_response({"error": "already_registered"}) is True
     assert is_already_registered_response({"error": "already_signed"}) is True
-    assert is_already_registered_response({"message": "user_already_registered"}) is True
+    assert (
+        is_already_registered_response({"message": "user_already_registered"}) is True
+    )
     assert is_already_registered_response({"message": "user_already_signed"}) is True
-    assert is_already_registered_response({"error": {"messageToUser": "כבר רשום לשיעור זה"}}) is True
-    assert is_already_registered_response({"error": {"message": "הנך רשום לסדרה"}}) is True
+    assert is_already_registered_response({"error": "already booked"}) is True
+    assert is_already_registered_response({"error": "user_already_booked"}) is True
+    assert (
+        is_already_registered_response(
+            {"error": {"messageToUser": "כבר רשום לשיעור זה"}}
+        )
+        is True
+    )
+    assert (
+        is_already_registered_response({"error": {"message": "הנך רשום לסדרה"}}) is True
+    )
     assert is_already_registered_response({"error": "כבר רשומה"}) is True
     assert is_already_registered_response({"error": "הנך רשומה"}) is True
+    assert is_already_registered_response({"error": "הינך רשום לשיעור"}) is True
+    assert is_already_registered_response({"error": "הינך רשומה לסדרה"}) is True
+    assert is_already_registered_response({"error": "רשום כבר לשיעור זה"}) is True
+    assert is_already_registered_response({"error": "רשומה כבר"}) is True
+    assert is_already_registered_response({"error": "כבר נרשמת לשיעור זה"}) is True
+    assert is_already_registered_response({"error": "נרשמת כבר"}) is True
 
-    # Raw response text
-    assert is_already_registered_response({}, "User already registered for class") is True
+    # Raw response text & HTML
+    assert (
+        is_already_registered_response({}, "User already registered for class") is True
+    )
     assert is_already_registered_response({}, "User already-registered") is True
+    assert is_already_registered_response({}, "<p>already&nbsp;registered</p>") is True
+    assert is_already_registered_response({}, "<p>כבר&nbsp;רשום</p>") is True
     assert is_already_registered_response({}, "הנך רשום!") is True
     assert is_already_registered_response({}, "כבר רשום") is True
+    assert (
+        is_already_registered_response(
+            None, r'{"error": "\u05db\u05d1\u05e8 \u05e8\u05e9\u05d5\u05dd"}'
+        )
+        is True
+    )
+    assert (
+        is_already_registered_response(None, b'{"error": "already_registered"}') is True
+    )
 
     # Negative responses
     assert is_already_registered_response({"error": "Class is full"}) is False
     assert is_already_registered_response({"message": "Membership expired"}) is False
+    assert (
+        is_already_registered_response({"message": "User registered successfully"})
+        is False
+    )
     assert is_already_registered_response({}, "Bad Gateway") is False
     assert is_already_registered_response(None, "") is False
 
@@ -452,17 +597,27 @@ def test_is_already_registered_response() -> None:
     [
         ("already registered", 400),
         ("already_registered", 400),
+        ("already-registered", 400),
         ("alreadyregistered", 400),
         ("already_signed", 400),
         ("already signed", 400),
+        ("already booked", 400),
+        ("already_booked", 400),
         ("user_already_registered", 409),
         ("user already registered", 409),
         ("user_already_signed", 409),
         ("user already signed", 409),
+        ("user_already_booked", 409),
         ("כבר רשום", 422),
         ("הנך רשום", 500),
+        ("הינך רשום", 400),
         ("כבר רשומה", 400),
         ("הנך רשומה", 400),
+        ("הינך רשומה", 400),
+        ("רשום כבר", 400),
+        ("רשומה כבר", 400),
+        ("כבר נרשמת", 400),
+        ("נרשמת כבר", 400),
         ("already_registered", 200),
     ],
 )
@@ -474,7 +629,9 @@ def test_book_class_already_registered_variations_stops_immediately(
     mock_session = MagicMock()
     mock_resp = MagicMock()
     mock_resp.status_code = status_code
-    mock_resp.text = json.dumps({"error": f"Prefix {pattern} suffix"}, ensure_ascii=False)
+    mock_resp.text = json.dumps(
+        {"error": f"Prefix {pattern} suffix"}, ensure_ascii=False
+    )
     mock_resp.json.return_value = {"error": {"message": f"Prefix {pattern} suffix"}}
     mock_session.post.return_value = mock_resp
 
@@ -513,12 +670,31 @@ def test_is_user_booked_for_schedule_expanded_fields() -> None:
     assert is_user_booked_for_schedule({"is_signed": "false"}) is False
     assert is_user_booked_for_schedule({"is_signed": None}) is False
 
+    # user_signed and is_user_signed flags
+    assert is_user_booked_for_schedule({"user_signed": True}) is True
+    assert is_user_booked_for_schedule({"user_signed": False}) is False
+    assert is_user_booked_for_schedule({"is_user_signed": True}) is True
+    assert is_user_booked_for_schedule({"is_user_signed": False}) is False
+
     # cancelScheduleUser flag
     assert is_user_booked_for_schedule({"cancelScheduleUser": True}) is True
     assert is_user_booked_for_schedule({"cancelScheduleUser": 1}) is True
     assert is_user_booked_for_schedule({"cancelScheduleUser": "true"}) is True
-    assert is_user_booked_for_schedule({"cancelScheduleUser": "cancelScheduleUser"}) is True
-    assert is_user_booked_for_schedule({"cancelScheduleUser": {"booking_id": 999}}) is True
+    assert (
+        is_user_booked_for_schedule({"cancelScheduleUser": "cancelScheduleUser"})
+        is True
+    )
+    assert (
+        is_user_booked_for_schedule({"cancelScheduleUser": "cancel_schedule_user"})
+        is True
+    )
+    assert (
+        is_user_booked_for_schedule({"cancelScheduleUser": "cancel-schedule-user"})
+        is True
+    )
+    assert (
+        is_user_booked_for_schedule({"cancelScheduleUser": {"booking_id": 999}}) is True
+    )
     assert is_user_booked_for_schedule({"cancelScheduleUser": False}) is False
     assert is_user_booked_for_schedule({"cancelScheduleUser": 0}) is False
     assert is_user_booked_for_schedule({"cancelScheduleUser": None}) is False
@@ -526,6 +702,18 @@ def test_is_user_booked_for_schedule_expanded_fields() -> None:
     # cancel_schedule_user flag
     assert is_user_booked_for_schedule({"cancel_schedule_user": True}) is True
     assert is_user_booked_for_schedule({"cancel_schedule_user": False}) is False
+
+    # booking_option variations (camelCase, snake_case, kebab-case)
+    assert is_user_booked_for_schedule({"booking_option": "cancelScheduleUser"}) is True
+    assert (
+        is_user_booked_for_schedule({"booking_option": "cancel_schedule_user"}) is True
+    )
+    assert (
+        is_user_booked_for_schedule({"booking_option": "CANCEL_SCHEDULE_USER"}) is True
+    )
+    assert (
+        is_user_booked_for_schedule({"booking_option": "cancel-schedule-user"}) is True
+    )
 
 
 def test_book_class_already_registered_raw_text_json_decode_error() -> None:
@@ -546,29 +734,40 @@ def test_book_class_already_registered_raw_text_json_decode_error() -> None:
 def test_is_user_booked_for_schedule_combinations() -> None:
     """Tests combinations where some flags are False but others are True."""
     # is_user_signed_to_schedule False, but user_booked True
-    assert is_user_booked_for_schedule({
-        "is_user_signed_to_schedule": False,
-        "user_booked": True,
-        "booking_option": "book",
-    }) is True
+    assert (
+        is_user_booked_for_schedule(
+            {
+                "is_user_signed_to_schedule": False,
+                "user_booked": True,
+                "booking_option": "book",
+            }
+        )
+        is True
+    )
 
     # is_user_signed_to_schedule False, user_booked False, but num_user_signed 1
-    assert is_user_booked_for_schedule({
-        "is_user_signed_to_schedule": False,
-        "user_booked": False,
-        "num_user_signed": 1,
-        "booking_option": "book",
-    }) is True
+    assert (
+        is_user_booked_for_schedule(
+            {
+                "is_user_signed_to_schedule": False,
+                "user_booked": False,
+                "num_user_signed": 1,
+                "booking_option": "book",
+            }
+        )
+        is True
+    )
 
     # is_user_signed_to_schedule False, user_booked False, num_user_signed 0, but is_signed True
-    assert is_user_booked_for_schedule({
-        "is_user_signed_to_schedule": False,
-        "user_booked": False,
-        "num_user_signed": 0,
-        "is_signed": True,
-        "booking_option": "book",
-    }) is True
-
-
-
-
+    assert (
+        is_user_booked_for_schedule(
+            {
+                "is_user_signed_to_schedule": False,
+                "user_booked": False,
+                "num_user_signed": 0,
+                "is_signed": True,
+                "booking_option": "book",
+            }
+        )
+        is True
+    )

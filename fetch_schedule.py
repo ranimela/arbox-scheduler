@@ -4,6 +4,7 @@ This module monitors, pre-scans, and automates high-precision class registration
 on the Arbox platform according to configured per-day schedules and date overrides.
 """
 
+import html
 import json
 import logging
 import os
@@ -44,7 +45,10 @@ EMAIL = os.getenv("ARBOX_EMAIL")
 PASSWORD = os.getenv("ARBOX_PASSWORD")
 USER_ID = os.getenv("ARBOX_USER_ID")
 MEMBERSHIP_USER_ID = os.getenv("ARBOX_MEMBERSHIP_USER_ID", "16582410")
-if not MEMBERSHIP_USER_ID or str(MEMBERSHIP_USER_ID).strip() in ("12165397", "1588686203"):
+if not MEMBERSHIP_USER_ID or str(MEMBERSHIP_USER_ID).strip() in (
+    "12165397",
+    "1588686203",
+):
     MEMBERSHIP_USER_ID = "16582410"
 
 # NTFY Settings
@@ -73,7 +77,9 @@ if config_path.exists():
             DATE_OVERRIDES = config_data.get("DATE_OVERRIDES") or DATE_OVERRIDES
             logger.info("Loaded target configuration from config.json.")
     except Exception as e:
-        logger.warning(f"Failed to load config.json ({e}). Using default configuration.")
+        logger.warning(
+            f"Failed to load config.json ({e}). Using default configuration."
+        )
 else:
     logger.info("config.json not found. Using default configuration.")
 
@@ -100,7 +106,9 @@ def get_israel_time() -> datetime:
     return datetime.now(ZoneInfo("Asia/Jerusalem"))
 
 
-def send_ntfy(title: str, message: str, priority: str = "default", tags: str = "") -> bool:
+def send_ntfy(
+    title: str, message: str, priority: str = "default", tags: str = ""
+) -> bool:
     """Send push notification via ntfy.sh within allowed evening window.
 
     Args:
@@ -116,7 +124,9 @@ def send_ntfy(title: str, message: str, priority: str = "default", tags: str = "
     isr_now = get_israel_time()
     isr_minutes = isr_now.hour * 60 + isr_now.minute
     if not (1200 <= isr_minutes <= 1380):
-        logger.info(f"Skipping ntfy notification (outside allowed window 20:00 - 23:00 Israel Time): {title}")
+        logger.info(
+            f"Skipping ntfy notification (outside allowed window 20:00 - 23:00 Israel Time): {title}"
+        )
         return False
 
     logger.info(f"Sending ntfy notification: {title}")
@@ -155,7 +165,8 @@ def _is_truthy_flag(val: Any) -> bool:
         return val > 0
     if isinstance(val, str):
         v = val.strip().lower()
-        if v in ("true", "1", "yes", "cancelscheduleuser"):
+        v_norm = v.replace("_", "").replace("-", "")
+        if v in ("true", "1", "yes") or v_norm == "cancelscheduleuser":
             return True
         if v in ("false", "0", "no", "", "none", "null"):
             return False
@@ -163,7 +174,7 @@ def _is_truthy_flag(val: Any) -> bool:
             return float(v) > 0
         except ValueError:
             return False
-    if isinstance(val, (dict, list)):
+    if isinstance(val, (dict, list, set, tuple)):
         return len(val) > 0
     return False
 
@@ -188,6 +199,8 @@ def is_user_booked_for_schedule(entry: dict | None) -> bool:
         "is_user_signed_to_schedule",
         "user_booked",
         "is_signed",
+        "user_signed",
+        "is_user_signed",
         "cancelScheduleUser",
         "cancel_schedule_user",
     )
@@ -199,12 +212,10 @@ def is_user_booked_for_schedule(entry: dict | None) -> bool:
     if "num_user_signed" in entry and _is_truthy_flag(entry.get("num_user_signed")):
         return True
 
-    # Check booking_option
+    # Check booking_option (e.g. cancelScheduleUser, cancel_schedule_user)
     booking_option = str(entry.get("booking_option") or "").strip().lower()
-    if booking_option == "cancelscheduleuser":
-        return True
-
-    return False
+    booking_option_norm = booking_option.replace("_", "").replace("-", "")
+    return booking_option_norm == "cancelscheduleuser"
 
 
 def extract_coach_name(entry: dict | None) -> str:
@@ -320,12 +331,16 @@ def wait_for_precision_window(
     # Only wait if we are within the 5-hour window
     diff_sec = (target_time_isr - now_isr).total_seconds()
     if diff_sec > 18000 or diff_sec < 0:
-        logger.info(f"Skipping wait: Not in the precision window. Current Israel Time: {now_isr.strftime('%H:%M:%S')}")
+        logger.info(
+            f"Skipping wait: Not in the precision window. Current Israel Time: {now_isr.strftime('%H:%M:%S')}"
+        )
         return
 
     target_time_utc = target_time_isr.astimezone(timezone.utc)
     logger.info("--- PRECISION COUNTDOWN ENGAGED ---")
-    logger.info(f"Target Time: {target_time_isr.strftime('%H:%M:%S')} Israel Time ({target_time_utc.strftime('%H:%M:%S')} UTC)")
+    logger.info(
+        f"Target Time: {target_time_isr.strftime('%H:%M:%S')} Israel Time ({target_time_utc.strftime('%H:%M:%S')} UTC)"
+    )
 
     # Initial "I am here" notification
     send_ntfy(
@@ -350,7 +365,9 @@ def wait_for_precision_window(
             has_sent_pre_notification = True
 
         if remaining <= 0:
-            logger.info(f"BEEP BEEP BEEP! 21:00:00 REACHED! GO GO GO! (Actual: {now.strftime('%H:%M:%S.%f')})")
+            logger.info(
+                f"BEEP BEEP BEEP! 21:00:00 REACHED! GO GO GO! (Actual: {now.strftime('%H:%M:%S.%f')})"
+            )
             break
 
         if remaining > 1:
@@ -400,7 +417,9 @@ def select_target_entry(
                 if isinstance(series_obj, dict)
                 else (entry.get("series_id") or entry.get("series_fk"))
             )
-            if entry_series_id is not None and str(entry_series_id) == str(target_series_id):
+            if entry_series_id is not None and str(entry_series_id) == str(
+                target_series_id
+            ):
                 return entry
 
     def score_entry(entry: dict) -> int:
@@ -442,9 +461,11 @@ def select_target_entry(
 
 
 ALREADY_BOOKED_PATTERNS: tuple[str, ...] = (
+    # English variations
     "alreadyregistered",
     "already_registered",
     "already registered",
+    "already-registered",
     "already_signed",
     "already signed",
     "alreadysigned",
@@ -454,6 +475,13 @@ ALREADY_BOOKED_PATTERNS: tuple[str, ...] = (
     "user_already_signed",
     "user already signed",
     "useralreadysigned",
+    "already_booked",
+    "already booked",
+    "alreadybooked",
+    "user_already_booked",
+    "user already booked",
+    "useralreadybooked",
+    # Hebrew variations
     "כבר רשום",
     "כבררשום",
     "כבר רשומה",
@@ -462,55 +490,95 @@ ALREADY_BOOKED_PATTERNS: tuple[str, ...] = (
     "הנךרשום",
     "הנך רשומה",
     "הנךרשומה",
+    "הינך רשום",
+    "הינךרשום",
+    "הינך רשומה",
+    "הינךרשומה",
+    "רשום כבר",
+    "רשוםכבר",
+    "רשומה כבר",
+    "רשומהכבר",
+    "כבר נרשמת",
+    "כברנרשמת",
+    "נרשמת כבר",
+    "נרשמתכבר",
 )
 
 
-def normalize_response_text(text: str) -> str:
+def normalize_response_text(text: str | bytes | Any) -> str:
     """Normalizes response text by converting to lowercase and stripping spaces, underscores, hyphens, and punctuation.
 
     Args:
-        text: Input string to normalize.
+        text: Input string, bytes, or representation to normalize.
 
     Returns:
         str: Normalized alphanumeric lowercase string.
     """
-    if not text or not isinstance(text, str):
+    if not text:
         return ""
-    lowered = text.lower()
+    if isinstance(text, (bytes, bytearray)):
+        try:
+            text = text.decode("utf-8", errors="replace")
+        except (UnicodeDecodeError, AttributeError):
+            return ""
+    if not isinstance(text, str):
+        return ""
+    cleaned = html.unescape(text)
+    if "\\u" in cleaned:
+        try:
+            cleaned = re.sub(
+                r"\\u([0-9a-fA-F]{4})",
+                lambda m: chr(int(m.group(1), 16)),
+                cleaned,
+            )
+        except (ValueError, re.error):
+            pass
+    lowered = cleaned.lower()
     return re.sub(r"[\s_\-\W]+", "", lowered)
 
 
-def is_already_registered_response(resp_json: Any, resp_text: str | None = None) -> bool:
+def is_already_registered_response(
+    resp_json: Any, resp_text: str | bytes | None = None
+) -> bool:
     """Checks whether the response indicates the user is already booked/registered.
 
     Args:
         resp_json: Parsed response payload (dict, list, or primitive).
-        resp_text: Raw response body string.
+        resp_text: Raw response body string or bytes.
 
     Returns:
         bool: True if any already-registered pattern matches, False otherwise.
     """
     raw_candidates: list[str] = []
-    if resp_text and isinstance(resp_text, str):
-        raw_candidates.append(resp_text)
+    if resp_text is not None:
+        if isinstance(resp_text, (bytes, bytearray)):
+            try:
+                resp_text = resp_text.decode("utf-8", errors="replace")
+            except (UnicodeDecodeError, AttributeError):
+                resp_text = str(resp_text)
+        if isinstance(resp_text, str) and resp_text.strip():
+            raw_candidates.append(resp_text)
 
     if isinstance(resp_json, (dict, list)):
         try:
             raw_candidates.append(json.dumps(resp_json, ensure_ascii=False))
-        except Exception:
+        except (TypeError, ValueError):
             raw_candidates.append(str(resp_json))
     elif resp_json is not None:
         raw_candidates.append(str(resp_json))
 
-    combined_raw = " ".join(raw_candidates).lower()
-    combined_norm = normalize_response_text(" ".join(raw_candidates))
+    norm_patterns = [
+        (pat, normalize_response_text(pat)) for pat in ALREADY_BOOKED_PATTERNS
+    ]
 
-    for pattern in ALREADY_BOOKED_PATTERNS:
-        if pattern.lower() in combined_raw:
-            return True
-        norm_pat = normalize_response_text(pattern)
-        if norm_pat and norm_pat in combined_norm:
-            return True
+    for candidate in raw_candidates:
+        cand_lower = candidate.lower()
+        cand_norm = normalize_response_text(candidate)
+        for pattern, norm_pat in norm_patterns:
+            if pattern.lower() in cand_lower:
+                return True
+            if norm_pat and norm_pat in cand_norm:
+                return True
 
     return False
 
@@ -606,7 +674,9 @@ def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool,
     return False, last_error_msg
 
 
-def generate_html_table(classes_info: list[dict], date_range_str: str, status_html: str = "") -> str:
+def generate_html_table(
+    classes_info: list[dict], date_range_str: str, status_html: str = ""
+) -> str:
     """Generates an HTML table summary of the schedule and booking status.
 
     Args:
@@ -713,8 +783,8 @@ def generate_html_table(classes_info: list[dict], date_range_str: str, status_ht
 
         html_content += f"""
                 <tr class="{row_class}">
-                    <td><strong>{cls['hour']}</strong></td>
-                    <td>{cls['training']}</td>
+                    <td><strong>{cls["hour"]}</strong></td>
+                    <td>{cls["training"]}</td>
                     <td>{status_badge}</td>
                 </tr>"""
 
@@ -734,7 +804,9 @@ def generate_html_table(classes_info: list[dict], date_range_str: str, status_ht
 def main() -> None:
     """Main entrypoint for schedule scanning and precision automated booking."""
     if not EMAIL or not PASSWORD:
-        logger.error("Please ensure ARBOX_EMAIL and ARBOX_PASSWORD are set in the .env file.")
+        logger.error(
+            "Please ensure ARBOX_EMAIL and ARBOX_PASSWORD are set in the .env file."
+        )
         sys.exit(1)
 
     events: list[dict] = []
@@ -770,25 +842,43 @@ def main() -> None:
             logger.warning(f"Could not load cached session token: {e}")
 
     parts = EMAIL.split("@")
-    masked_email = f"{parts[0][0]}***{parts[0][-1]}@{parts[1]}" if len(parts[0]) > 1 else EMAIL
+    masked_email = (
+        f"{parts[0][0]}***{parts[0][-1]}@{parts[1]}" if len(parts[0]) > 1 else EMAIL
+    )
 
     if token:
         session.headers.update({"accesstoken": token})
     else:
         logger.info("No cached session token found. Initiating fresh login...")
         try:
-            resp = session.post(login_url, json={"email": EMAIL, "password": PASSWORD, "phone": ""}, timeout=10)
+            resp = session.post(
+                login_url,
+                json={"email": EMAIL, "password": PASSWORD, "phone": ""},
+                timeout=10,
+            )
             resp.raise_for_status()
             resp_body = resp.json()
-            data = resp_body.get("data") if isinstance(resp_body.get("data"), dict) else resp_body
-            token = (data.get("token") if isinstance(data, dict) else None) or resp.headers.get("token")
+            data = (
+                resp_body.get("data")
+                if isinstance(resp_body.get("data"), dict)
+                else resp_body
+            )
+            token = (
+                data.get("token") if isinstance(data, dict) else None
+            ) or resp.headers.get("token")
             if not token:
                 logger.error("Login failed, no token returned.")
                 sys.exit(1)
             session.headers.update({"accesstoken": token})
             # Save token to cache
             with open(session_cache_path, "w", encoding="utf-8") as f:
-                json.dump({"token": token, "created_at": datetime.now(timezone.utc).isoformat()}, f)
+                json.dump(
+                    {
+                        "token": token,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    f,
+                )
             logger.info(f"Logged in fresh as {masked_email} and cached token.")
         except Exception as e:
             logger.exception(f"Login error: {e}")
@@ -816,15 +906,31 @@ def main() -> None:
         # Intercept 401/403 errors for token refresh logic
         if resp.status_code in (401, 403):
             logger.info("Cached token expired/invalid. Re-authenticating...")
-            resp_login = session.post(login_url, json={"email": EMAIL, "password": PASSWORD, "phone": ""}, timeout=10)
+            resp_login = session.post(
+                login_url,
+                json={"email": EMAIL, "password": PASSWORD, "phone": ""},
+                timeout=10,
+            )
             resp_login.raise_for_status()
             resp_body = resp_login.json()
-            data = resp_body.get("data") if isinstance(resp_body.get("data"), dict) else resp_body
-            token = (data.get("token") if isinstance(data, dict) else None) or resp_login.headers.get("token")
+            data = (
+                resp_body.get("data")
+                if isinstance(resp_body.get("data"), dict)
+                else resp_body
+            )
+            token = (
+                data.get("token") if isinstance(data, dict) else None
+            ) or resp_login.headers.get("token")
             if token:
                 session.headers.update({"accesstoken": token})
                 with open(session_cache_path, "w", encoding="utf-8") as f:
-                    json.dump({"token": token, "created_at": datetime.now(timezone.utc).isoformat()}, f)
+                    json.dump(
+                        {
+                            "token": token,
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                        f,
+                    )
                 logger.info("Fresh token cached successfully. Retrying pre-scan...")
                 resp = session.post(schedule_url, json=payload, timeout=10)
         resp.raise_for_status()
@@ -842,15 +948,20 @@ def main() -> None:
             target_coach = day_config.get("coach", "")
             target_type = day_config.get("type")
 
-            target_info_list = [entry for entry in events if entry.get("time") == target_time]
+            target_info_list = [
+                entry for entry in events if entry.get("time") == target_time
+            ]
 
             # Match by training type if specified (e.g., "WOD")
             if target_type:
+
                 def matches_training_type(entry_item: dict) -> bool:
                     cat_name = extract_training_type(entry_item).lower()
                     return target_type.lower() in cat_name
 
-                target_info_list = [entry for entry in target_info_list if matches_training_type(entry)]
+                target_info_list = [
+                    entry for entry in target_info_list if matches_training_type(entry)
+                ]
 
             target_series_id = day_config.get("series_id")
             target_entry = select_target_entry(
@@ -868,14 +979,20 @@ def main() -> None:
                 is_already_booked = is_user_booked_for_schedule(target_entry)
                 spots_free, spots_booked, spots_max = extract_spots(target_entry)
 
-                target_summary = f"{tomorrow_day} {tomorrow} at {target_time} (Coach: {coach_name})"
-                target_summary_with_spots = f"{target_summary}\nSpots: {spots_free}/{spots_max}"
+                target_summary = (
+                    f"{tomorrow_day} {tomorrow} at {target_time} (Coach: {coach_name})"
+                )
+                target_summary_with_spots = (
+                    f"{target_summary}\nSpots: {spots_free}/{spots_max}"
+                )
                 logger.info(f"TARGET ACQUIRED: {target_summary_with_spots}")
 
                 if is_already_booked:
                     logger.info("Target class is ALREADY BOOKED for this user.")
             else:
-                target_summary_with_spots = f"No class found at {target_time} for {tomorrow_day}."
+                target_summary_with_spots = (
+                    f"No class found at {target_time} for {tomorrow_day}."
+                )
                 logger.warning(f"WARNING: {target_summary_with_spots}")
     except Exception as e:
         logger.exception(f"Pre-scan error: {e}")
@@ -883,7 +1000,9 @@ def main() -> None:
 
     # If no target class was identified, we have nothing to book. Exit early to avoid billing waste.
     if not target_class_id:
-        logger.warning("No target class found matching the configuration for tomorrow. Exiting immediately.")
+        logger.warning(
+            "No target class found matching the configuration for tomorrow. Exiting immediately."
+        )
         sys.exit(0)
 
     # 3. Start Precision Timer with target info for the 20:59 notification
@@ -896,18 +1015,32 @@ def main() -> None:
     if not is_already_booked and target_class_id:
         logger.info("Refreshing authentication token prior to booking execution...")
         try:
-            resp = session.post(login_url, json={"email": EMAIL, "password": PASSWORD, "phone": ""}, timeout=10)
+            resp = session.post(
+                login_url,
+                json={"email": EMAIL, "password": PASSWORD, "phone": ""},
+                timeout=10,
+            )
             resp.raise_for_status()
             resp_body = resp.json()
-            data = resp_body.get("data") if isinstance(resp_body.get("data"), dict) else resp_body
-            token = (data.get("token") if isinstance(data, dict) else None) or resp.headers.get("token")
+            data = (
+                resp_body.get("data")
+                if isinstance(resp_body.get("data"), dict)
+                else resp_body
+            )
+            token = (
+                data.get("token") if isinstance(data, dict) else None
+            ) or resp.headers.get("token")
             if token:
                 session.headers.update({"accesstoken": token})
                 logger.info("Token refreshed successfully.")
             else:
-                logger.warning("Token refresh failed. Proceeding with existing session.")
+                logger.warning(
+                    "Token refresh failed. Proceeding with existing session."
+                )
         except Exception as e:
-            logger.warning(f"Token refresh error: {e}. Proceeding with existing session.")
+            logger.warning(
+                f"Token refresh error: {e}. Proceeding with existing session."
+            )
 
     # 4. EXECUTION (Fire immediately at 21:00:00)
     classes_info = []
@@ -936,23 +1069,27 @@ def main() -> None:
                 raw_events = []
             events = [e for e in raw_events if isinstance(e, dict)]
         except Exception as e:
-            logger.warning(f"Could not fetch updated schedule for HTML report ({e}). Using pre-scan events.")
+            logger.warning(
+                f"Could not fetch updated schedule for HTML report ({e}). Using pre-scan events."
+            )
 
         for entry in events:
             schedule_id = entry.get("id")
-            is_best_match = (schedule_id == target_class_id)
+            is_best_match = schedule_id == target_class_id
 
             hour = entry.get("time", "")
             training = extract_training_type(entry)
 
-            classes_info.append({
-                "day": tomorrow_day,
-                "date": tomorrow,
-                "hour": hour,
-                "training": training,
-                "was_booked": True if (is_best_match and success) else False,
-                "best_match": is_best_match,
-            })
+            classes_info.append(
+                {
+                    "day": tomorrow_day,
+                    "date": tomorrow,
+                    "hour": hour,
+                    "training": training,
+                    "was_booked": True if (is_best_match and success) else False,
+                    "best_match": is_best_match,
+                }
+            )
     else:
         logger.warning("No target ID found. Skipping booking attempt.")
 
@@ -976,4 +1113,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
