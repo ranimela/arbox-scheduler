@@ -1054,3 +1054,42 @@ def test_is_user_booked_for_schedule_combinations() -> None:
         )
         is True
     )
+
+
+def test_main_already_booked_exits_early(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verifies that main() exits with status 0 and makes 0 booking calls when target class is already booked."""
+    from fetch_schedule import main
+
+    monkeypatch.setattr("fetch_schedule.EMAIL", "test@example.com")
+    monkeypatch.setattr("fetch_schedule.PASSWORD", "secret")
+
+    mock_session = MagicMock()
+
+    # Cached session token read mock
+    mock_token_resp = MagicMock()
+    mock_token_resp.status_code = 200
+    mock_token_resp.json.return_value = {"data": {"token": "fake_token"}}
+
+    # Schedule pre-scan mock returns an already-booked entry
+    mock_sched_resp = MagicMock()
+    mock_sched_resp.status_code = 200
+    mock_sched_resp.json.return_value = {
+        "data": [
+            {
+                "id": 99999,
+                "time": "08:30",
+                "is_user_signed_to_schedule": True,
+                "booking_option": "cancelScheduleUser",
+                "series": {"id": 187541, "series_name": "WOD"},
+            }
+        ]
+    }
+    mock_session.post.side_effect = [mock_token_resp, mock_sched_resp]
+    monkeypatch.setattr("requests.Session", lambda: mock_session)
+
+    # Expect SystemExit with code 0
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 0
+

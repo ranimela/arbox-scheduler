@@ -1253,11 +1253,16 @@ def main() -> None:
         )
         sys.exit(0)
 
-    # 3. Start Precision Timer with target info for the 20:59 notification
-    if not is_already_booked:
-        wait_for_precision_window(pre_notify_msg=target_summary_with_spots)
-    else:
-        logger.info("Class is already booked! Skipping precision wait.")
+    # 3. If class is already booked, exit immediately to prevent redundant booking attempts and duplicate notification spam
+    if is_already_booked:
+        logger.info(
+            f"Target class for {tomorrow} ({target_summary}) is ALREADY BOOKED for this user. "
+            "Exiting cleanly without making redundant booking attempts or sending duplicate notifications."
+        )
+        sys.exit(0)
+
+    # Start Precision Timer with target info for the 20:59 notification
+    wait_for_precision_window(pre_notify_msg=target_summary_with_spots)
 
     # Re-authenticate if we had a precision wait to ensure the token has not expired
     if not is_already_booked and target_class_id:
@@ -1295,11 +1300,7 @@ def main() -> None:
     booking_summaries = []
 
     if target_class_id:
-        if is_already_booked:
-            success = True
-            log_msg = "Successfully secured spot! (Already Registered)"
-        else:
-            success, log_msg = book_class(session, target_class_id)
+        success, log_msg = book_class(session, target_class_id)
         # Clean the log message of any success/fail emojis
         clean_log_msg = log_msg.replace("✅", "").replace("❌", "").strip()
         booking_summaries.append(f"{target_summary}: {clean_log_msg}")
