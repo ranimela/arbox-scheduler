@@ -1305,6 +1305,14 @@ def main() -> None:
         clean_log_msg = log_msg.replace("✅", "").replace("❌", "").strip()
         booking_summaries.append(f"{target_summary}: {clean_log_msg}")
 
+        # If the class was already registered, exit cleanly without duplicate notification spam
+        if "already registered" in log_msg.lower():
+            logger.info(
+                f"Target class for {tomorrow} ({target_summary}) is ALREADY REGISTERED for this user. "
+                "Spot is already secured; skipping duplicate confirmation notification and exiting cleanly."
+            )
+            sys.exit(0)
+
         # We still fetch the full list for the final report table
         try:
             resp = session.post(schedule_url, json=payload, timeout=10)

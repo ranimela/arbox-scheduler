@@ -1056,16 +1056,23 @@ def test_is_user_booked_for_schedule_combinations() -> None:
     )
 
 
-def test_main_already_booked_exits_early(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_already_booked_exits_early(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Verifies that main() exits with status 0 and makes 0 booking calls when target class is already booked."""
     from fetch_schedule import main
 
     monkeypatch.setattr("fetch_schedule.EMAIL", "test@example.com")
     monkeypatch.setattr("fetch_schedule.PASSWORD", "secret")
+    monkeypatch.setattr("fetch_schedule.PROJECT_DIR", tmp_path)
+
+    # Pin date to Saturday so tomorrow is Sunday 08:30
+    fixed_now = datetime(2026, 9, 12, 20, 50, tzinfo=ZoneInfo("Asia/Jerusalem"))
+    monkeypatch.setattr("fetch_schedule.get_israel_time", lambda: fixed_now)
 
     mock_session = MagicMock()
 
-    # Cached session token read mock
+    # Fresh login token response mock
     mock_token_resp = MagicMock()
     mock_token_resp.status_code = 200
     mock_token_resp.json.return_value = {"data": {"token": "fake_token"}}
@@ -1092,4 +1099,137 @@ def test_main_already_booked_exits_early(monkeypatch: pytest.MonkeyPatch) -> Non
         main()
 
     assert exc_info.value.code == 0
+
+
+def test_main_book_class_already_registered_exits_early_without_notification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verifies that main() exits with status 0 and skips send_ntfy when book_class returns Already Registered."""
+    from fetch_schedule import main
+
+    monkeypatch.setattr("fetch_schedule.EMAIL", "test@example.com")
+    monkeypatch.setattr("fetch_schedule.PASSWORD", "secret")
+    monkeypatch.setattr("fetch_schedule.PROJECT_DIR", tmp_path)
+
+    fixed_now = datetime(2026, 9, 12, 20, 50, tzinfo=ZoneInfo("Asia/Jerusalem"))
+    monkeypatch.setattr("fetch_schedule.get_israel_time", lambda: fixed_now)
+
+    mock_session = MagicMock()
+
+    # Fresh login token mock
+    mock_token_resp = MagicMock()
+    mock_token_resp.status_code = 200
+    mock_token_resp.json.return_value = {"data": {"token": "fake_token"}}
+
+    # Schedule pre-scan mock returns an unbooked entry
+    mock_sched_resp = MagicMock()
+    mock_sched_resp.status_code = 200
+    mock_sched_resp.json.return_value = {
+        "data": [
+            {
+                "id": 99999,
+                "time": "08:30",
+                "is_user_signed_to_schedule": None,
+                "booking_option": "insertScheduleUser",
+                "series": {"id": 187541, "series_name": "WOD"},
+            }
+        ]
+    }
+    # login, pre-scan, re-auth prior to booking
+    mock_session.post.side_effect = [mock_token_resp, mock_sched_resp, mock_token_resp]
+    monkeypatch.setattr("requests.Session", lambda: mock_session)
+    monkeypatch.setattr("fetch_schedule.wait_for_precision_window", lambda **kw: None)
+
+    mock_send_ntfy = MagicMock()
+    monkeypatch.setattr("fetch_schedule.send_ntfy", mock_send_ntfy)
+
+    # Mock book_class returning already registered
+    monkeypatch.setattr(
+        "fetch_schedule.book_class",
+        lambda session, cid: (True, "Successfully secured spot! (Already Registered)"),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 0
+    mock_send_ntfy.assert_not_called()
+
+
+def test_main_book_class_confirmed_sends_notification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verifies that main() sends confirmation notification when book_class newly secures a spot."""
+    from fetch_schedule import main
+
+    monkeypatch.setattr("fetch_schedule.EMAIL", "test@example.com")
+    monkeypatch.setattr("fetch_schedule.PASSWORD", "secret")
+    monkeypatch.setattr("fetch_schedule.PROJECT_DIR", tmp_path)
+
+    fixed_now = datetime(2026, 9, 12, 20, 50, tzinfo=ZoneInfo("Asia/Jerusalem"))
+    monkeypatch.setattr("fetch_schedule.get_israel_time", lambda: fixed_now)
+
+    mock_session = MagicMock()
+
+    # Fresh login token mock
+    mock_token_resp = MagicMock()
+    mock_token_resp.status_code = 200
+    mock_token_resp.json.return_value = {"data": {"token": "fake_token"}}
+
+    # Schedule pre-scan mock returns an unbooked entry
+    mock_sched_resp = MagicMock()
+    mock_sched_resp.status_code = 200
+    mock_sched_resp.json.return_value = {
+        "data": [
+            {
+                "id": 99999,
+                "time": "08:30",
+                "is_user_signed_to_schedule": None,
+                "booking_option": "insertScheduleUser",
+                "series": {"id": 187541, "series_name": "WOD"},
+            }
+        ]
+    }
+    # For post-booking schedule fetch
+    mock_sched_post_resp = MagicMock()
+    mock_sched_post_resp.status_code = 200
+    mock_sched_post_resp.json.return_value = {
+        "data": [
+            {
+                "id": 99999,
+                "time": "08:30",
+                "is_user_signed_to_schedule": True,
+                "booking_option": "cancelScheduleUser",
+                "series": {"id": 187541, "series_name": "WOD"},
+            }
+        ]
+    }
+    mock_session.post.side_effect = [
+        mock_token_resp,
+        mock_sched_resp,
+        mock_token_resp,
+        mock_sched_post_resp,
+    ]
+    monkeypatch.setattr("requests.Session", lambda: mock_session)
+    monkeypatch.setattr("fetch_schedule.wait_for_precision_window", lambda **kw: None)
+
+    mock_send_ntfy = MagicMock()
+    monkeypatch.setattr("fetch_schedule.send_ntfy", mock_send_ntfy)
+
+    # Mock book_class returning confirmed
+    monkeypatch.setattr(
+        "fetch_schedule.book_class",
+        lambda session, cid: (
+            True,
+            "Successfully secured spot! (Confirmed) - Attempt 1",
+        ),
+    )
+
+    main()
+
+    mock_send_ntfy.assert_called_once()
+    args, _ = mock_send_ntfy.call_args
+    assert "✅ Booking Confirmed" in args[0]
+
+
 
