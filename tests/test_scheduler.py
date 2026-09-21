@@ -1233,46 +1233,51 @@ def test_main_book_class_confirmed_sends_notification(
 
 
 @pytest.mark.parametrize(
-    ("hour", "minute", "event", "expected"),
+    ("hour", "minute", "second", "event", "expected"),
     [
         # Scheduled runs before window
-        (20, 45, "schedule", False),
-        (20, 59, "schedule", False),
-        (21, 0, "schedule", False),
-        (21, 1, "schedule", False),
-        # Scheduled runs at or past 21:02 cutoff (delayed runners)
-        (21, 2, "schedule", True),
-        (21, 5, "schedule", True),
-        (21, 16, "schedule", True),
-        (21, 43, "schedule", True),
-        (21, 57, "schedule", True),
-        (22, 16, "schedule", True),
-        (22, 38, "schedule", True),
-        (23, 30, "schedule", True),
-        (0, 30, "schedule", True),
-        (3, 0, "schedule", True),
-        (5, 59, "schedule", True),
+        (20, 45, 0, "schedule", False),
+        (20, 59, 0, "schedule", False),
+        (21, 0, 0, "schedule", False),
+        (21, 0, 14, "schedule", False),
+        # Scheduled runs at or past 21:00:15 cutoff (delayed runners)
+        (21, 0, 15, "schedule", True),
+        (21, 1, 0, "schedule", True),
+        (21, 2, 0, "schedule", True),
+        (21, 5, 0, "schedule", True),
+        (21, 16, 0, "schedule", True),
+        (21, 43, 0, "schedule", True),
+        (21, 57, 0, "schedule", True),
+        (22, 16, 0, "schedule", True),
+        (22, 38, 0, "schedule", True),
+        (23, 30, 0, "schedule", True),
+        (0, 30, 0, "schedule", True),
+        (3, 0, 0, "schedule", True),
+        (5, 59, 59, "schedule", True),
         # Scheduled runs in the daytime/afternoon for next day
-        (6, 0, "schedule", False),
-        (13, 30, "schedule", False),
-        (17, 30, "schedule", False),
+        (6, 0, 0, "schedule", False),
+        (13, 30, 0, "schedule", False),
+        (17, 30, 0, "schedule", False),
         # Manual workflow_dispatch runs must NEVER be blocked by the cutoff
-        (21, 2, "workflow_dispatch", False),
-        (21, 16, "workflow_dispatch", False),
-        (22, 38, "workflow_dispatch", False),
-        (2, 0, "workflow_dispatch", False),
+        (21, 0, 30, "workflow_dispatch", False),
+        (21, 2, 0, "workflow_dispatch", False),
+        (21, 16, 0, "workflow_dispatch", False),
+        (22, 38, 0, "workflow_dispatch", False),
+        (2, 0, 0, "workflow_dispatch", False),
         # Non-GH runs (empty event)
-        (21, 16, "", False),
-        (22, 38, "", False),
+        (21, 16, 0, "", False),
+        (22, 38, 0, "", False),
     ],
 )
 def test_is_scheduled_run_past_window(
-    hour: int, minute: int, event: str, expected: bool
+    hour: int, minute: int, second: int, event: str, expected: bool
 ) -> None:
-    """Tests is_scheduled_run_past_window correctly identifies late scheduled runs."""
+    """Tests is_scheduled_run_past_window correctly identifies late scheduled runs with second precision."""
     from fetch_schedule import is_scheduled_run_past_window
 
-    test_dt = datetime(2026, 9, 21, hour, minute, tzinfo=ZoneInfo("Asia/Jerusalem"))
+    test_dt = datetime(
+        2026, 9, 21, hour, minute, second, tzinfo=ZoneInfo("Asia/Jerusalem")
+    )
     assert is_scheduled_run_past_window(test_dt, event) is expected
 
 
@@ -1307,6 +1312,70 @@ def test_main_scheduled_late_run_exits_cleanly_without_booking_or_notifications(
     mock_session.get.assert_not_called()
     # No failure or success notification sent
     mock_send_ntfy.assert_not_called()
+
+
+def test_main_failure_notification_suppressed_when_runner_skipped_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verifies that if a runner did not wait for the window, Booking Failed alerts are strictly suppressed."""
+    from fetch_schedule import main
+
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "")
+    monkeypatch.setattr("fetch_schedule.EMAIL", "test@example.com")
+    monkeypatch.setattr("fetch_schedule.PASSWORD", "secret")
+    monkeypatch.setattr("fetch_schedule.PROJECT_DIR", tmp_path)
+
+    # Pin date to Saturday
+    fixed_now = datetime(2026, 9, 12, 20, 50, tzinfo=ZoneInfo("Asia/Jerusalem"))
+    monkeypatch.setattr("fetch_schedule.get_israel_time", lambda: fixed_now)
+
+    mock_session = MagicMock()
+
+    mock_token_resp = MagicMock()
+    mock_token_resp.status_code = 200
+    mock_token_resp.json.return_value = {"data": {"token": "fake_token"}}
+
+    mock_sched_resp = MagicMock()
+    mock_sched_resp.status_code = 200
+    mock_sched_resp.json.return_value = {
+        "data": [
+            {
+                "id": 99999,
+                "time": "08:30",
+                "is_user_signed_to_schedule": None,
+                "booking_option": "insertScheduleUser",
+                "series": {"id": 187541, "series_name": "WOD"},
+            }
+        ]
+    }
+    mock_session.post.side_effect = [
+        mock_token_resp,
+        mock_sched_resp,
+        mock_token_resp,
+        mock_sched_resp,
+    ]
+    monkeypatch.setattr("requests.Session", lambda: mock_session)
+
+    # Simulate skipping precision window (runner arrived late)
+    monkeypatch.setattr("fetch_schedule.wait_for_precision_window", lambda **kw: False)
+
+    mock_send_ntfy = MagicMock()
+    monkeypatch.setattr("fetch_schedule.send_ntfy", mock_send_ntfy)
+
+    # Simulate Arbox returning 516 Schedule Is Full
+    monkeypatch.setattr(
+        "fetch_schedule.book_class",
+        lambda session, cid: (
+            False,
+            "Failed to book (Status 516): Schedule is full",
+        ),
+    )
+
+    main()
+
+    # send_ntfy must NOT be called because waited_for_window was False!
+    mock_send_ntfy.assert_not_called()
+
 
 
 

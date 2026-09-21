@@ -440,7 +440,7 @@ def wait_for_precision_window(
     expected_wake_hour_utc: int = 13,
     expected_wake_minute_utc: int = 47,
     pre_notify_msg: str | None = None,
-) -> None:
+) -> bool:
     """If the script starts early, waits until exactly the target time in Israel.
 
     Sends a status update at 20:59 (1 minute before launch).
@@ -451,6 +451,9 @@ def wait_for_precision_window(
         expected_wake_hour_utc: Expected runner wake hour in UTC (default: 13).
         expected_wake_minute_utc: Expected runner wake minute in UTC (default: 47).
         pre_notify_msg: Message preview for 1-minute pre-notification.
+
+    Returns:
+        bool: True if the precision countdown was waited and reached, False if skipped.
     """
     now_isr = get_israel_time()
     target_time_isr = now_isr.replace(
@@ -479,7 +482,7 @@ def wait_for_precision_window(
         logger.info(
             f"Skipping wait: Not in the precision window. Current Israel Time: {now_isr.strftime('%H:%M:%S')}"
         )
-        return
+        return False
 
     target_time_utc = target_time_isr.astimezone(timezone.utc)
     logger.info("--- PRECISION COUNTDOWN ENGAGED ---")
@@ -526,6 +529,8 @@ def wait_for_precision_window(
         else:
             time.sleep(0.001)
 
+    return True
+
 
 def is_scheduled_run_past_window(now_isr: datetime, event_name: str) -> bool:
     """Checks if a scheduled cron workflow run started after the daily 21:00 booking window has closed.
@@ -535,16 +540,18 @@ def is_scheduled_run_past_window(now_isr: datetime, event_name: str) -> bool:
         event_name: GitHub Actions event name (e.g. 'schedule', 'workflow_dispatch').
 
     Returns:
-        bool: True if the run was triggered by schedule and started after 21:02 Israel Time, False otherwise.
+        bool: True if the run was triggered by schedule and started after 21:00:15 Israel Time, False otherwise.
     """
     if event_name != "schedule":
         return False
 
     # The booking window for tomorrow's classes is strictly at 21:00:00 Israel Time.
-    # If a scheduled cron is delayed by GitHub Actions and wakes up between 21:02:00
-    # and 06:00:00 the following morning, the window is closed and classes are already full.
-    minutes_from_midnight = now_isr.hour * 60 + now_isr.minute
-    return (minutes_from_midnight >= 1262) or (minutes_from_midnight < 360)
+    # The precision countdown runner fires at 21:00:00.000 and completes by 21:00:05.
+    # Any scheduled cron that wakes up at or after 21:00:15 is a delayed runner.
+    # Any time between 21:00:15 and 06:00:00 is past the booking window.
+    seconds_from_midnight = now_isr.hour * 3600 + now_isr.minute * 60 + now_isr.second
+    # 21:00:15 is 21 * 3600 + 15 = 75615 seconds; 06:00:00 is 21600 seconds
+    return (seconds_from_midnight >= 75615) or (seconds_from_midnight < 21600)
 
 
 def select_target_entry(
@@ -1291,7 +1298,9 @@ def main() -> None:
         sys.exit(0)
 
     # Start Precision Timer with target info for the 20:59 notification
-    wait_for_precision_window(pre_notify_msg=target_summary_with_spots)
+    waited_for_window = wait_for_precision_window(
+        pre_notify_msg=target_summary_with_spots
+    )
 
     # Re-authenticate if we had a precision wait to ensure the token has not expired
     if not is_already_booked and target_class_id:
@@ -1391,14 +1400,22 @@ def main() -> None:
         if any_booked:
             status_html = '<div class="status-header status-success">MISSION SUCCESS: Booking Secured</div>'
             ntfy_title = "✅ Booking Confirmed"
+            generate_html_table(classes_info, tomorrow, status_html)
+            ntfy_msg = "\n".join(booking_summaries)
+            send_ntfy(ntfy_title, ntfy_msg, priority="high")
         else:
             status_html = '<div class="status-header status-failure">FAILURE: Class was likely full</div>'
             ntfy_title = "❌ Booking Failed"
-
-        generate_html_table(classes_info, tomorrow, status_html)
-
-        ntfy_msg = "\n".join(booking_summaries)
-        send_ntfy(ntfy_title, ntfy_msg, priority="high")
+            generate_html_table(classes_info, tomorrow, status_html)
+            ntfy_msg = "\n".join(booking_summaries)
+            # Only send failure notification if this runner actually counted down to 21:00:00
+            # or was explicitly manually triggered. Late runners must never send failure alerts.
+            if waited_for_window or github_event == "workflow_dispatch":
+                send_ntfy(ntfy_title, ntfy_msg, priority="high")
+            else:
+                logger.warning(
+                    "Skipping 'Booking Failed' notification: runner started late and did not participate in the 21:00:00 countdown."
+                )
 
 
 if __name__ == "__main__":
