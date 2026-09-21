@@ -6,16 +6,14 @@ concurrency:
 
 on:
   schedule:
-    # Spaced triggers to guarantee at least one wakes up before 21:00 Israel Time
-    - cron: '30 13 * * *' # 16:30 Israel
-    - cron: '0 14 * * *'  # 17:00 Israel
-    - cron: '30 14 * * *' # 17:30 Israel
-    - cron: '0 15 * * *'  # 18:00 Israel
-    - cron: '30 15 * * *' # 18:30 Israel
-    - cron: '0 16 * * *'  # 19:00 Israel
-    - cron: '30 16 * * *' # 19:30 Israel
-    - cron: '0 17 * * *'  # 20:00 Israel
-    - cron: '30 17 * * *' # 20:30 Israel
+    # Targeted standby triggers for 21:00 Israel Time registration:
+    # Summer (UTC+3, 21:00 ISR = 18:00 UTC):
+    - cron: '0 17 * * *'  # 20:00 Israel Summer / 19:00 Israel Winter
+    - cron: '30 17 * * *' # 20:30 Israel Summer / 19:30 Israel Winter
+    - cron: '50 17 * * *' # 20:50 Israel Summer / 19:50 Israel Winter
+    # Winter (UTC+2, 21:00 ISR = 19:00 UTC):
+    - cron: '30 18 * * *' # 21:30 Israel Summer (exits immediately) / 20:30 Israel Winter
+    - cron: '50 18 * * *' # 21:50 Israel Summer (exits immediately) / 20:50 Israel Winter
   
   workflow_dispatch:
 
@@ -48,6 +46,7 @@ jobs:
           ARBOX_NTFY_TOPIC: ${{ secrets.ARBOX_NTFY_TOPIC }}
           TARGET_DAYS: ${{ vars.TARGET_DAYS }}
           TARGET_HOUR: ${{ vars.TARGET_HOUR }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           python fetch_schedule.py
 

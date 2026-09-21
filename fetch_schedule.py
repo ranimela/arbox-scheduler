@@ -527,6 +527,26 @@ def wait_for_precision_window(
             time.sleep(0.001)
 
 
+def is_scheduled_run_past_window(now_isr: datetime, event_name: str) -> bool:
+    """Checks if a scheduled cron workflow run started after the daily 21:00 booking window has closed.
+
+    Args:
+        now_isr: Current datetime localized to Asia/Jerusalem.
+        event_name: GitHub Actions event name (e.g. 'schedule', 'workflow_dispatch').
+
+    Returns:
+        bool: True if the run was triggered by schedule and started after 21:02 Israel Time, False otherwise.
+    """
+    if event_name != "schedule":
+        return False
+
+    # The booking window for tomorrow's classes is strictly at 21:00:00 Israel Time.
+    # If a scheduled cron is delayed by GitHub Actions and wakes up between 21:02:00
+    # and 06:00:00 the following morning, the window is closed and classes are already full.
+    minutes_from_midnight = now_isr.hour * 60 + now_isr.minute
+    return (minutes_from_midnight >= 1262) or (minutes_from_midnight < 360)
+
+
 def select_target_entry(
     target_info_list: list[dict],
     target_coach: str = "",
@@ -1051,6 +1071,15 @@ def generate_html_table(
 
 def main() -> None:
     """Main entrypoint for schedule scanning and precision automated booking."""
+    now_isr = get_israel_time()
+    github_event = os.getenv("GITHUB_EVENT_NAME", "").strip().lower()
+    if is_scheduled_run_past_window(now_isr, github_event):
+        logger.info(
+            f"Scheduled run woke up at {now_isr.strftime('%H:%M:%S')} Israel Time, past the 21:00:00 booking window. "
+            "Registration for tomorrow has already concluded. Exiting immediately with status 0."
+        )
+        sys.exit(0)
+
     if not EMAIL or not PASSWORD:
         logger.error(
             "Please ensure ARBOX_EMAIL and ARBOX_PASSWORD are set in the .env file."
