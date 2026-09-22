@@ -350,7 +350,7 @@ def test_config_date_overrides_empty() -> None:
 
 
 def test_wait_for_precision_window_outside_bounds_returns_immediately() -> None:
-    """Ensures precision countdown returns immediately when outside the 5-hour window."""
+    """Ensures precision countdown returns immediately when outside the 6-hour window."""
     now = get_israel_time()
     past_hour = (now.hour - 2) % 24
     wait_for_precision_window(target_hour_israel=past_hour, target_minute_israel=0)
@@ -1375,8 +1375,3 @@ def test_main_failure_notification_suppressed_when_runner_skipped_window(
 
     # send_ntfy must NOT be called because waited_for_window was False!
     mock_send_ntfy.assert_not_called()
-
-
-
-
-

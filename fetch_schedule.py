@@ -476,9 +476,9 @@ def wait_for_precision_window(
     delay_delta = now_utc - expected_wake
     delay_mins = int(delay_delta.total_seconds() / 60)
 
-    # Only wait if we are within the 5-hour window
+    # Only wait if we are within the 6-hour window (15:00 to 21:00 Israel Time)
     diff_sec = (target_time_isr - now_isr).total_seconds()
-    if diff_sec > 18000 or diff_sec < 0:
+    if diff_sec > 21600 or diff_sec < 0:
         logger.info(
             f"Skipping wait: Not in the precision window. Current Israel Time: {now_isr.strftime('%H:%M:%S')}"
         )

@@ -6,14 +6,19 @@ concurrency:
 
 on:
   schedule:
-    # Targeted standby triggers for 21:00 Israel Time registration:
-    # Summer (UTC+3, 21:00 ISR = 18:00 UTC):
+    # Spaced triggers to guarantee at least one wakes up before 21:00 Israel Time
+    # Summer (UTC+3, 21:00 ISR = 18:00 UTC) / Winter (UTC+2, 21:00 ISR = 19:00 UTC):
+    - cron: '30 13 * * *' # 16:30 Israel Summer / 15:30 Israel Winter
+    - cron: '0 14 * * *'  # 17:00 Israel Summer / 16:00 Israel Winter
+    - cron: '30 14 * * *' # 17:30 Israel Summer / 16:30 Israel Winter
+    - cron: '0 15 * * *'  # 18:00 Israel Summer / 17:00 Israel Winter
+    - cron: '30 15 * * *' # 18:30 Israel Summer / 17:30 Israel Winter
+    - cron: '0 16 * * *'  # 19:00 Israel Summer / 18:00 Israel Winter
+    - cron: '30 16 * * *' # 19:30 Israel Summer / 18:30 Israel Winter
     - cron: '0 17 * * *'  # 20:00 Israel Summer / 19:00 Israel Winter
     - cron: '30 17 * * *' # 20:30 Israel Summer / 19:30 Israel Winter
-    - cron: '50 17 * * *' # 20:50 Israel Summer / 19:50 Israel Winter
-    # Winter (UTC+2, 21:00 ISR = 19:00 UTC):
-    - cron: '30 18 * * *' # 21:30 Israel Summer (exits immediately) / 20:30 Israel Winter
-    - cron: '50 18 * * *' # 21:50 Israel Summer (exits immediately) / 20:50 Israel Winter
+    - cron: '0 18 * * *'  # 21:00 Israel Summer / 20:00 Israel Winter
+    - cron: '30 18 * * *' # 21:30 Israel Summer / 20:30 Israel Winter
   
   workflow_dispatch:
 
