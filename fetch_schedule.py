@@ -554,6 +554,27 @@ def is_scheduled_run_past_window(now_isr: datetime, event_name: str) -> bool:
     return (seconds_from_midnight >= 75615) or (seconds_from_midnight < 21600)
 
 
+def is_scheduled_run_before_standby_window(now_isr: datetime, event_name: str) -> bool:
+    """Checks if a scheduled cron workflow run started before the daily 15:30 standby window opens.
+
+    Args:
+        now_isr: Current datetime localized to Asia/Jerusalem.
+        event_name: GitHub Actions event name (e.g. 'schedule', 'workflow_dispatch').
+
+    Returns:
+        bool: True if the run was triggered by schedule and started between 06:00:00 and 15:30:00 Israel Time, False otherwise.
+    """
+    if event_name != "schedule":
+        return False
+
+    # The standby countdown can wait at most 5.5 hours (from 15:30:00 to 21:00:00).
+    # If a runner wakes up between 06:00:00 and 15:30:00 Israel Time with little or no delay,
+    # it is too early to stand by and registration is not open.
+    seconds_from_midnight = now_isr.hour * 3600 + now_isr.minute * 60 + now_isr.second
+    # 06:00:00 is 21600 seconds; 15:30:00 is 15 * 3600 + 30 * 60 = 55800 seconds
+    return 21600 <= seconds_from_midnight < 55800
+
+
 def select_target_entry(
     target_info_list: list[dict],
     target_coach: str = "",
@@ -1084,6 +1105,13 @@ def main() -> None:
         logger.info(
             f"Scheduled run woke up at {now_isr.strftime('%H:%M:%S')} Israel Time, past the 21:00:00 booking window. "
             "Registration for tomorrow has already concluded. Exiting immediately with status 0."
+        )
+        sys.exit(0)
+
+    if is_scheduled_run_before_standby_window(now_isr, github_event):
+        logger.info(
+            f"Scheduled run woke up at {now_isr.strftime('%H:%M:%S')} Israel Time, prior to the active 15:30:00 standby window. "
+            "Exiting cleanly with status 0 to wait for subsequent scheduled triggers."
         )
         sys.exit(0)
 

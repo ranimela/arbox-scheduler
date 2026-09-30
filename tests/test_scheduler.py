@@ -1281,6 +1281,82 @@ def test_is_scheduled_run_past_window(
     assert is_scheduled_run_past_window(test_dt, event) is expected
 
 
+@pytest.mark.parametrize(
+    ("hour", "minute", "second", "event", "expected"),
+    [
+        # Scheduled morning/noon runs before active standby window (15:30)
+        (6, 0, 0, "schedule", True),
+        (11, 47, 0, "schedule", True),
+        (12, 17, 0, "schedule", True),
+        (13, 47, 0, "schedule", True),
+        (14, 47, 0, "schedule", True),
+        (15, 29, 59, "schedule", True),
+        # Scheduled runs inside active standby window (15:30 to 21:00)
+        (15, 30, 0, "schedule", False),
+        (16, 47, 0, "schedule", False),
+        (18, 0, 0, "schedule", False),
+        (20, 47, 0, "schedule", False),
+        (21, 0, 0, "schedule", False),
+        # Scheduled runs at or past 21:00:15 cutoff (not 'before' window)
+        (21, 0, 15, "schedule", False),
+        (21, 16, 0, "schedule", False),
+        (23, 30, 0, "schedule", False),
+        (0, 30, 0, "schedule", False),
+        (5, 59, 59, "schedule", False),
+        # Manual workflow_dispatch runs must NEVER be blocked
+        (11, 47, 0, "workflow_dispatch", False),
+        (13, 47, 0, "workflow_dispatch", False),
+        (15, 20, 0, "workflow_dispatch", False),
+        # Non-GH runs (empty event)
+        (11, 47, 0, "", False),
+        (13, 47, 0, "", False),
+    ],
+)
+def test_is_scheduled_run_before_standby_window(
+    hour: int, minute: int, second: int, event: str, expected: bool
+) -> None:
+    """Tests is_scheduled_run_before_standby_window correctly identifies morning scheduled runs before 15:30."""
+    from fetch_schedule import is_scheduled_run_before_standby_window
+
+    test_dt = datetime(
+        2026, 9, 21, hour, minute, second, tzinfo=ZoneInfo("Asia/Jerusalem")
+    )
+    assert is_scheduled_run_before_standby_window(test_dt, event) is expected
+
+
+def test_main_scheduled_early_run_exits_cleanly_without_booking_or_notifications(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verifies that an early scheduled runner (e.g. 12:47) exits immediately with status 0, 0 requests, 0 ntfy."""
+    from fetch_schedule import main
+
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "schedule")
+    monkeypatch.setattr("fetch_schedule.EMAIL", "test@example.com")
+    monkeypatch.setattr("fetch_schedule.PASSWORD", "secret")
+    monkeypatch.setattr("fetch_schedule.PROJECT_DIR", tmp_path)
+
+    # Early runner at 12:47 Israel Time
+    early_time = datetime(2026, 9, 21, 12, 47, tzinfo=ZoneInfo("Asia/Jerusalem"))
+    monkeypatch.setattr("fetch_schedule.get_israel_time", lambda: early_time)
+
+    mock_session = MagicMock()
+    monkeypatch.setattr("requests.Session", lambda: mock_session)
+
+    mock_send_ntfy = MagicMock()
+    monkeypatch.setattr("fetch_schedule.send_ntfy", mock_send_ntfy)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    # Must exit cleanly with status 0
+    assert exc_info.value.code == 0
+    # No login, no schedule fetching, no booking call
+    mock_session.post.assert_not_called()
+    mock_session.get.assert_not_called()
+    # No failure or success notification sent
+    mock_send_ntfy.assert_not_called()
+
+
 def test_main_scheduled_late_run_exits_cleanly_without_booking_or_notifications(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
