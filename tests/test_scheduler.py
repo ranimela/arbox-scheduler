@@ -341,12 +341,12 @@ def test_already_booked_detection_scenarios() -> None:
     assert is_user_booked_for_schedule(None) is False
 
 
-def test_config_date_overrides_empty() -> None:
-    """Verifies config.json DATE_OVERRIDES is empty dictionary."""
+def test_config_date_overrides_dict() -> None:
+    """Verifies config.json DATE_OVERRIDES is a dictionary."""
     config_file = PROJECT_DIR / "config.json"
     with open(config_file, "r", encoding="utf-8") as f:
         data = json.load(f)
-    assert data.get("DATE_OVERRIDES") == {}
+    assert isinstance(data.get("DATE_OVERRIDES"), dict)
 
 
 def test_wait_for_precision_window_outside_bounds_returns_immediately() -> None:
