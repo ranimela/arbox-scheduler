@@ -876,7 +876,7 @@ def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool,
     Returns:
         tuple[bool, str]: Tuple of (success_status, status_message).
     """
-    url = "https://apiappv2.arboxapp.com/api/v2/scheduleUser/insert?XDEBUG_SESSION_START=PHPSTORM"
+    url = "https://apiappv2.arboxapp.com/api/v2/scheduleUser/insert"
     try:
         membership_id_int = int(MEMBERSHIP_USER_ID)
         schedule_id_int = int(schedule_id)
@@ -946,9 +946,16 @@ def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool,
             last_error_msg = f"Failed to book (Status {resp.status_code}): {arbox_err}"
             logger.error(f"Attempt {attempt} - {last_error_msg}")
 
-            # Transient errors to retry: rate limits (429), gateway/proxy drops (502, 503, 504)
+            # Transient errors to retry: rate limits (429), gateway/proxy drops (502, 503, 504),
+            # and Cloudflare WAF/edge challenge responses (403 with HTML or Cloudflare signature)
+            server_header = str(resp.headers.get("Server") or "").lower()
+            is_cloudflare_block = resp.status_code == 403 and (
+                "<!DOCTYPE html>" in str(raw_text or "")
+                or "cloudflare" in server_header
+                or "cloudflare" in str(raw_text or "").lower()
+            )
             retryable_codes = {429, 502, 503, 504}
-            if resp.status_code not in retryable_codes:
+            if resp.status_code not in retryable_codes and not is_cloudflare_block:
                 # Stop immediately on deterministic business logic/membership errors and return exact reason
                 return False, last_error_msg
 
@@ -1132,7 +1139,13 @@ def main() -> None:
         "referername": "site",
         "version": "10",
         "lang": "en",
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like"
+            " Gecko) Chrome/128.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://site.arboxapp.com",
+        "Referer": "https://site.arboxapp.com/",
     }
 
     session = requests.Session()

@@ -420,6 +420,35 @@ def test_book_class_retryable_errors_then_success(
     assert mock_session.post.call_count == 2
 
 
+def test_book_class_cloudflare_403_retries_then_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tests that book_class retries when Cloudflare WAF returns a 403 HTML page."""
+    mock_session = MagicMock()
+    mock_resp_403 = MagicMock()
+    mock_resp_403.status_code = 403
+    mock_resp_403.headers = {"Server": "cloudflare"}
+    mock_resp_403.text = "<!DOCTYPE html><html><body>Error 403 Cloudflare</body></html>"
+    mock_resp_403.json.return_value = {}
+
+    mock_resp_200 = MagicMock()
+    mock_resp_200.status_code = 200
+    mock_resp_200.headers = {}
+    mock_resp_200.json.return_value = {"status": "ok"}
+
+    mock_session.post.side_effect = [mock_resp_403, mock_resp_200]
+    monkeypatch.setattr("time.sleep", lambda _: None)
+
+    success, msg = book_class(mock_session, 12345)
+    assert success is True
+    assert "Attempt 2" in msg
+    assert mock_session.post.call_count == 2
+    # Verify clean endpoint URL without XDEBUG parameter
+    called_url = mock_session.post.call_args_list[0][0][0]
+    assert "XDEBUG_SESSION_START" not in called_url
+    assert called_url == "https://apiappv2.arboxapp.com/api/v2/scheduleUser/insert"
+
+
 def test_book_class_retryable_connection_timeout_exhaustion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
