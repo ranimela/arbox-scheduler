@@ -527,6 +527,91 @@ def test_book_class_cloudflare_403_curl_fallback_already_registered(
     assert "Already Registered" in msg
 
 
+def test_book_class_curl_primary_attempt_1_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verifies that book_class calls curl first on Attempt 1 and succeeds without invoking session.post."""
+    mock_session = MagicMock()
+    mock_session.headers = {"User-Agent": "Mozilla/5.0", "Origin": "https://site.arboxapp.com"}
+
+    mock_curl = MagicMock(return_value=(200, '{"status": "ok", "data": {"id": 12345}}'))
+    monkeypatch.setattr("fetch_schedule.run_curl_fallback", mock_curl)
+
+    success, msg = book_class(mock_session, 12345)
+    assert success is True
+    assert "Successfully secured spot! (Confirmed) - Attempt 1 (via curl)" in msg
+    mock_curl.assert_called_once()
+    mock_session.post.assert_not_called()
+
+
+def test_book_class_curl_primary_attempt_1_already_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verifies that book_class detects already registered on Attempt 1 via primary curl call."""
+    mock_session = MagicMock()
+    mock_session.headers = {"User-Agent": "Mozilla/5.0"}
+
+    mock_curl = MagicMock(
+        return_value=(425, '{"statusCode": 425, "error": {"message": "alreadyRegistered"}}')
+    )
+    monkeypatch.setattr("fetch_schedule.run_curl_fallback", mock_curl)
+
+    success, msg = book_class(mock_session, 12345)
+    assert success is True
+    assert "Successfully secured spot! (Already Registered)" in msg
+    mock_curl.assert_called_once()
+    mock_session.post.assert_not_called()
+
+
+def test_book_class_curl_primary_attempt_1_deterministic_error_halts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verifies that book_class halts immediately on deterministic error from primary curl without retries."""
+    mock_session = MagicMock()
+    mock_session.headers = {"User-Agent": "Mozilla/5.0"}
+
+    mock_curl = MagicMock(
+        return_value=(518, '{"statusCode": 518, "error": {"messageToUser": "Membership expired"}}')
+    )
+    monkeypatch.setattr("fetch_schedule.run_curl_fallback", mock_curl)
+
+    success, msg = book_class(mock_session, 12345)
+    assert success is False
+    assert "Status 518" in msg
+    assert "Membership expired" in msg
+    mock_curl.assert_called_once()
+    mock_session.post.assert_not_called()
+
+
+def test_book_class_curl_primary_attempt_1_403_falls_back_to_session_post(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verifies that if primary curl returns 403, it strips Origin/Referer and falls back to session.post."""
+    mock_session = MagicMock()
+    mock_session.headers = {
+        "User-Agent": "ArboxApp/1.0",
+        "Origin": "https://site.arboxapp.com",
+        "Referer": "https://site.arboxapp.com/schedule",
+    }
+
+    mock_curl = MagicMock(return_value=(403, "<!DOCTYPE html><html><body>Blocked</body></html>"))
+    monkeypatch.setattr("fetch_schedule.run_curl_fallback", mock_curl)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"status": "ok"}
+    mock_session.post.return_value = mock_resp
+
+    success, msg = book_class(mock_session, 12345)
+    assert success is True
+    assert "Successfully secured spot! (Confirmed) - Attempt 1" in msg
+    mock_curl.assert_called_once()
+    mock_session.post.assert_called_once()
+    assert "Origin" not in mock_session.headers
+    assert "Referer" not in mock_session.headers
+    assert mock_session.headers["User-Agent"] == "Mozilla/5.0"
+
+
 def test_run_curl_fallback_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests run_curl_fallback handles missing curl gracefully."""
     monkeypatch.setattr("fetch_schedule.shutil.which", lambda _: None)
