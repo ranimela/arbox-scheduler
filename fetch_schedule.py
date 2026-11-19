@@ -10,9 +10,12 @@ import logging
 import os
 import random
 import re
+import shutil
+import subprocess
 import sys
 import time
 import urllib.parse
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -440,10 +443,12 @@ def wait_for_precision_window(
     expected_wake_hour_utc: int = 13,
     expected_wake_minute_utc: int = 47,
     pre_notify_msg: str | None = None,
+    token_refresh_callback: Callable[[], None] | None = None,
 ) -> bool:
     """If the script starts early, waits until exactly the target time in Israel.
 
-    Sends a status update at 20:59 (1 minute before launch).
+    Sends a status update at 20:59 (1 minute before launch) and optionally
+    refreshes authentication credentials at T-minus 15 seconds (20:59:45).
 
     Args:
         target_hour_israel: Target hour in Israel timezone (default: 21).
@@ -451,6 +456,7 @@ def wait_for_precision_window(
         expected_wake_hour_utc: Expected runner wake hour in UTC (default: 13).
         expected_wake_minute_utc: Expected runner wake minute in UTC (default: 47).
         pre_notify_msg: Message preview for 1-minute pre-notification.
+        token_refresh_callback: Optional callable to refresh auth credentials at T-minus 15s.
 
     Returns:
         bool: True if the precision countdown was waited and reached, False if skipped.
@@ -497,6 +503,7 @@ def wait_for_precision_window(
     )
 
     has_sent_pre_notification = False
+    has_refreshed_token = False
 
     while True:
         now = get_israel_time()
@@ -511,6 +518,19 @@ def wait_for_precision_window(
                 priority="high",
             )
             has_sent_pre_notification = True
+
+        # T-minus 15 seconds token refresh (20:59:45)
+        # Pre-authenticates ahead of the top-of-hour rush to guarantee zero latency at 21:00:00.000
+        if remaining <= 16 and not has_refreshed_token and token_refresh_callback:
+            if remaining > 2:
+                logger.info(
+                    "[20:59:45] Refreshing authentication token ahead of 21:00:00 launch..."
+                )
+                try:
+                    token_refresh_callback()
+                except Exception as e:
+                    logger.warning(f"Pre-launch token refresh warning: {e}")
+            has_refreshed_token = True
 
         if remaining <= 0:
             logger.info(
@@ -866,6 +886,49 @@ def is_already_registered_response(
     return False
 
 
+def run_curl_fallback(
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    timeout: int = 10,
+) -> tuple[int, str]:
+    """Executes an HTTP POST using the system curl binary as a fallback against Cloudflare TLS blocks.
+
+    Args:
+        url: Destination API URL.
+        headers: HTTP headers dictionary.
+        payload: JSON-serializable request body dictionary.
+        timeout: Command timeout in seconds (default: 10).
+
+    Returns:
+        tuple[int, str]: HTTP response status code and raw response body text.
+    """
+    curl_path = shutil.which("curl")
+    if not curl_path:
+        return 0, ""
+
+    cmd = [curl_path, "-s", "-w", "\n%{http_code}", "-X", "POST", url]
+    for k, v in headers.items():
+        if v is not None:
+            cmd.extend(["-H", f"{k}: {v}"])
+
+    cmd.extend(["-d", json.dumps(payload)])
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        output = proc.stdout or ""
+        if "\n" in output:
+            body, code_str = output.rsplit("\n", 1)
+            try:
+                return int(code_str.strip()), body
+            except ValueError:
+                return 0, output
+        return 0, output
+    except Exception as e:
+        logger.warning(f"curl fallback execution error: {e}")
+        return 0, str(e)
+
+
 def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool, str]:
     """Attempts to book a class using the V2 Arbox API.
 
@@ -954,6 +1017,48 @@ def book_class(session: requests.Session, schedule_id: int | str) -> tuple[bool,
                 or "cloudflare" in server_header
                 or "cloudflare" in str(raw_text or "").lower()
             )
+
+            if is_cloudflare_block:
+                logger.warning(
+                    f"Attempt {attempt} blocked by Cloudflare (Status 403). Attempting curl HTTP/2 fallback..."
+                )
+                curl_code, curl_text = run_curl_fallback(url, dict(session.headers), payload)
+                if curl_code != 0:
+                    try:
+                        curl_json = json.loads(curl_text)
+                    except Exception:
+                        curl_json = {}
+
+                    if is_already_registered_response(curl_json, curl_text):
+                        msg = "Successfully secured spot! (Already Registered)"
+                        logger.info(f"{msg} - Attempt {attempt} (via curl)")
+                        return True, msg
+
+                    if curl_code == 200:
+                        msg = f"Successfully secured spot! (Confirmed) - Attempt {attempt} (via curl)"
+                        logger.info(msg)
+                        return True, msg
+
+                    if curl_code != 403:
+                        err_obj = curl_json.get("error") if isinstance(curl_json, dict) else None
+                        if isinstance(err_obj, dict):
+                            c_err = err_obj.get("messageToUser") or err_obj.get("message") or ""
+                        elif isinstance(err_obj, str):
+                            c_err = err_obj
+                        else:
+                            c_err = curl_json.get("message") or curl_text[:200]
+                        last_error_msg = f"Failed to book (Status {curl_code}): {c_err}"
+                        logger.error(f"Attempt {attempt} (via curl) - {last_error_msg}")
+                        if curl_code not in {401, 403, 429, 502, 503, 504}:
+                            return False, last_error_msg
+
+                # If curl was also blocked or unavailable, switch to clean minimal header profile
+                if "Origin" in session.headers:
+                    logger.info("Switching to clean minimal header profile for subsequent retries...")
+                    session.headers.pop("Origin", None)
+                    session.headers.pop("Referer", None)
+                    session.headers["User-Agent"] = "Mozilla/5.0"
+
             retryable_codes = {429, 502, 503, 504}
             if resp.status_code not in retryable_codes and not is_cloudflare_block:
                 # Stop immediately on deterministic business logic/membership errors and return exact reason
@@ -1338,14 +1443,13 @@ def main() -> None:
         )
         sys.exit(0)
 
-    # Start Precision Timer with target info for the 20:59 notification
-    waited_for_window = wait_for_precision_window(
-        pre_notify_msg=target_summary_with_spots
-    )
+    has_refreshed_auth = False
 
-    # Re-authenticate if we had a precision wait to ensure the token has not expired
-    if not is_already_booked and target_class_id:
+    # Define pre-launch token refresh callback to execute ahead of 21:00:00 without booking latency
+    def refresh_token() -> None:
+        nonlocal has_refreshed_auth
         logger.info("Refreshing authentication token prior to booking execution...")
+        has_refreshed_auth = True
         try:
             resp = session.post(
                 login_url,
@@ -1373,6 +1477,17 @@ def main() -> None:
             logger.warning(
                 f"Token refresh error: {e}. Proceeding with existing session."
             )
+
+    # Start Precision Timer with target info and T-minus 15s token refresh callback
+    waited_for_window = wait_for_precision_window(
+        pre_notify_msg=target_summary_with_spots,
+        token_refresh_callback=refresh_token if (not is_already_booked and target_class_id) else None,
+    )
+
+    # Fallback for environments where wait_for_precision_window did not execute the callback
+    # (e.g. mocked countdowns in unit tests)
+    if not has_refreshed_auth and not is_already_booked and target_class_id:
+        refresh_token()
 
     # 4. EXECUTION (Fire immediately at 21:00:00)
     classes_info = []

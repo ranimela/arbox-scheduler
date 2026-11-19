@@ -2,7 +2,7 @@
 
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
@@ -27,6 +27,7 @@ from fetch_schedule import (
     is_already_registered_response,
     is_user_booked_for_schedule,
     normalize_response_text,
+    run_curl_fallback,
     select_target_entry,
     send_ntfy,
     wait_for_precision_window,
@@ -380,6 +381,31 @@ def test_wait_for_precision_window_target_israel_timezone_utc_conversion() -> No
     assert winter_utc.minute == 0
 
 
+def test_wait_for_precision_window_invokes_token_refresh_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tests that wait_for_precision_window invokes token_refresh_callback ahead of launch."""
+    t_target = datetime(2026, 9, 12, 21, 0, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+    times = [
+        # Step 1: initial check outside diff_sec (20:59:45 -> 15s remaining)
+        t_target - timedelta(seconds=15),
+        # Step 2: inside while loop, remaining == 15s -> triggers callback
+        t_target - timedelta(seconds=15),
+        # Step 3: next iteration, reaches target -> terminates
+        t_target,
+        t_target,
+    ]
+    time_iter = iter(times)
+    monkeypatch.setattr("fetch_schedule.get_israel_time", lambda: next(time_iter, t_target))
+    monkeypatch.setattr("fetch_schedule.send_ntfy", lambda *a, **k: True)
+    monkeypatch.setattr("time.sleep", lambda _: None)
+
+    mock_callback = MagicMock()
+    result = wait_for_precision_window(token_refresh_callback=mock_callback)
+    assert result is True
+    mock_callback.assert_called_once()
+
+
 def test_send_ntfy_window_filtering(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests notification window restriction between 20:00 and 23:00 Israel Time."""
     # Mock time outside 20:00 - 23:00 (e.g. 10:00)
@@ -425,6 +451,7 @@ def test_book_class_cloudflare_403_retries_then_success(
 ) -> None:
     """Tests that book_class retries when Cloudflare WAF returns a 403 HTML page."""
     mock_session = MagicMock()
+    mock_session.headers = {"User-Agent": "Mozilla/5.0", "Origin": "https://site.arboxapp.com"}
     mock_resp_403 = MagicMock()
     mock_resp_403.status_code = 403
     mock_resp_403.headers = {"Server": "cloudflare"}
@@ -438,6 +465,7 @@ def test_book_class_cloudflare_403_retries_then_success(
 
     mock_session.post.side_effect = [mock_resp_403, mock_resp_200]
     monkeypatch.setattr("time.sleep", lambda _: None)
+    monkeypatch.setattr("fetch_schedule.run_curl_fallback", lambda *a, **k: (403, "Cloudflare blocked"))
 
     success, msg = book_class(mock_session, 12345)
     assert success is True
@@ -447,6 +475,89 @@ def test_book_class_cloudflare_403_retries_then_success(
     called_url = mock_session.post.call_args_list[0][0][0]
     assert "XDEBUG_SESSION_START" not in called_url
     assert called_url == "https://apiappv2.arboxapp.com/api/v2/scheduleUser/insert"
+
+
+def test_book_class_cloudflare_403_curl_fallback_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tests that book_class successfully recovers via curl HTTP/2 fallback when session.post is Cloudflare blocked."""
+    mock_session = MagicMock()
+    mock_session.headers = {"User-Agent": "Mozilla/5.0"}
+    mock_resp_403 = MagicMock()
+    mock_resp_403.status_code = 403
+    mock_resp_403.headers = {"Server": "cloudflare"}
+    mock_resp_403.text = "<!DOCTYPE html><html><body>Cloudflare Block</body></html>"
+    mock_resp_403.json.return_value = {}
+
+    mock_session.post.return_value = mock_resp_403
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    # Mock curl returning HTTP 200
+    monkeypatch.setattr(
+        "fetch_schedule.run_curl_fallback",
+        lambda *a, **k: (200, '{"status": "confirmed", "data": {"id": 12345}}'),
+    )
+
+    success, msg = book_class(mock_session, 12345)
+    assert success is True
+    assert "via curl" in msg
+    assert "Confirmed" in msg
+
+
+def test_book_class_cloudflare_403_curl_fallback_already_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tests that book_class detects already registered via curl HTTP/2 fallback."""
+    mock_session = MagicMock()
+    mock_session.headers = {"User-Agent": "Mozilla/5.0"}
+    mock_resp_403 = MagicMock()
+    mock_resp_403.status_code = 403
+    mock_resp_403.headers = {"Server": "cloudflare"}
+    mock_resp_403.text = "<!DOCTYPE html><html><body>Cloudflare Block</body></html>"
+    mock_resp_403.json.return_value = {}
+
+    mock_session.post.return_value = mock_resp_403
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    monkeypatch.setattr(
+        "fetch_schedule.run_curl_fallback",
+        lambda *a, **k: (425, '{"statusCode":425,"error":{"message":"alreadyRegistered"}}'),
+    )
+
+    success, msg = book_class(mock_session, 12345)
+    assert success is True
+    assert "Already Registered" in msg
+
+
+def test_run_curl_fallback_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests run_curl_fallback handles missing curl gracefully."""
+    monkeypatch.setattr("fetch_schedule.shutil.which", lambda _: None)
+    code, out = run_curl_fallback("https://example.com", {}, {})
+    assert code == 0
+    assert out == ""
+
+
+def test_run_curl_fallback_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests run_curl_fallback parses curl status code and stdout correctly."""
+    monkeypatch.setattr("fetch_schedule.shutil.which", lambda _: "/usr/bin/curl")
+    mock_proc = MagicMock()
+    mock_proc.stdout = '{"status": "ok"}\n200'
+    monkeypatch.setattr("fetch_schedule.subprocess.run", lambda *a, **k: mock_proc)
+
+    code, out = run_curl_fallback("https://example.com", {"header": "val"}, {"key": "val"})
+    assert code == 200
+    assert out == '{"status": "ok"}'
+
+
+def test_run_curl_fallback_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests run_curl_fallback returns 0 on subprocess exception."""
+    monkeypatch.setattr("fetch_schedule.shutil.which", lambda _: "/usr/bin/curl")
+
+    def raise_err(*a, **k):
+        raise OSError("Process failed")
+
+    monkeypatch.setattr("fetch_schedule.subprocess.run", raise_err)
+    code, out = run_curl_fallback("https://example.com", {}, {})
+    assert code == 0
+    assert "Process failed" in out
 
 
 def test_book_class_retryable_connection_timeout_exhaustion(
