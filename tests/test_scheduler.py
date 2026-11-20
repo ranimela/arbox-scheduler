@@ -624,12 +624,29 @@ def test_run_curl_fallback_success(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests run_curl_fallback parses curl status code and stdout correctly."""
     monkeypatch.setattr("fetch_schedule.shutil.which", lambda _: "/usr/bin/curl")
     mock_proc = MagicMock()
-    mock_proc.stdout = '{"status": "ok"}\n200'
-    monkeypatch.setattr("fetch_schedule.subprocess.run", lambda *a, **k: mock_proc)
+    mock_proc.stdout = b'{"status": "ok"}\n200'
+    mock_sub = MagicMock(return_value=mock_proc)
+    monkeypatch.setattr("fetch_schedule.subprocess.run", mock_sub)
 
     code, out = run_curl_fallback("https://example.com", {"header": "val"}, {"key": "val"})
     assert code == 200
     assert out == '{"status": "ok"}'
+    # Verify --compressed is passed to curl to decompress gzip/brotli
+    called_cmd = mock_sub.call_args[0][0]
+    assert "--compressed" in called_cmd
+
+
+def test_run_curl_fallback_gzip_compressed_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests run_curl_fallback handles binary gzip output without raising UnicodeDecodeError."""
+    monkeypatch.setattr("fetch_schedule.shutil.which", lambda _: "/usr/bin/curl")
+    mock_proc = MagicMock()
+    # Binary output with 0x8b byte that would fail strict utf-8 decode if raw bytes decoded blindly
+    mock_proc.stdout = b'\x1f\x8b\x08\x00' + b'{"status": "ok"}\n200'
+    monkeypatch.setattr("fetch_schedule.subprocess.run", lambda *a, **k: mock_proc)
+
+    code, out = run_curl_fallback("https://example.com", {}, {})
+    assert code == 200
+    assert '{"status": "ok"}' in out
 
 
 def test_run_curl_fallback_exception(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1326,10 +1343,10 @@ def test_main_already_booked_exits_early(
     assert exc_info.value.code == 0
 
 
-def test_main_book_class_already_registered_exits_early_without_notification(
+def test_main_book_class_already_registered_sends_confirmed_notification(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Verifies that main() exits with status 0 and skips send_ntfy when book_class returns Already Registered."""
+    """Verifies that main() sends confirmation notification when book_class returns Already Registered at 21:00."""
     from fetch_schedule import main
 
     monkeypatch.setattr("fetch_schedule.EMAIL", "test@example.com")
@@ -1360,8 +1377,13 @@ def test_main_book_class_already_registered_exits_early_without_notification(
             }
         ]
     }
-    # login, pre-scan, re-auth prior to booking
-    mock_session.post.side_effect = [mock_token_resp, mock_sched_resp, mock_token_resp]
+    # login, pre-scan, re-auth prior to booking, updated schedule fetch
+    mock_session.post.side_effect = [
+        mock_token_resp,
+        mock_sched_resp,
+        mock_token_resp,
+        mock_sched_resp,
+    ]
     monkeypatch.setattr("requests.Session", lambda: mock_session)
     monkeypatch.setattr("fetch_schedule.wait_for_precision_window", lambda **kw: None)
 
@@ -1374,11 +1396,12 @@ def test_main_book_class_already_registered_exits_early_without_notification(
         lambda session, cid: (True, "Successfully secured spot! (Already Registered)"),
     )
 
-    with pytest.raises(SystemExit) as exc_info:
-        main()
+    main()
 
-    assert exc_info.value.code == 0
-    mock_send_ntfy.assert_not_called()
+    # Must send Booking Confirmed notification so user knows their spot is secured
+    mock_send_ntfy.assert_called_once()
+    args, _ = mock_send_ntfy.call_args
+    assert "✅ Booking Confirmed" in args[0]
 
 
 def test_main_book_class_confirmed_sends_notification(

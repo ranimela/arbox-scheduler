@@ -907,7 +907,7 @@ def run_curl_fallback(
     if not curl_path:
         return 0, ""
 
-    cmd = [curl_path, "-s", "-w", "\n%{http_code}", "-X", "POST", url]
+    cmd = [curl_path, "-s", "--compressed", "-w", "\n%{http_code}", "-X", "POST", url]
     for k, v in headers.items():
         if v is not None:
             cmd.extend(["-H", f"{k}: {v}"])
@@ -915,8 +915,12 @@ def run_curl_fallback(
     cmd.extend(["-d", json.dumps(payload)])
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        output = proc.stdout or ""
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        raw_stdout = proc.stdout or b""
+        if isinstance(raw_stdout, bytes):
+            output = raw_stdout.decode("utf-8", errors="replace")
+        else:
+            output = str(raw_stdout)
         if "\n" in output:
             body, code_str = output.rsplit("\n", 1)
             try:
@@ -1566,14 +1570,6 @@ def main() -> None:
         # Clean the log message of any success/fail emojis
         clean_log_msg = log_msg.replace("✅", "").replace("❌", "").strip()
         booking_summaries.append(f"{target_summary}: {clean_log_msg}")
-
-        # If the class was already registered, exit cleanly without duplicate notification spam
-        if "already registered" in log_msg.lower():
-            logger.info(
-                f"Target class for {tomorrow} ({target_summary}) is ALREADY REGISTERED for this user. "
-                "Spot is already secured; skipping duplicate confirmation notification and exiting cleanly."
-            )
-            sys.exit(0)
 
         # We still fetch the full list for the final report table
         try:
